@@ -1,3 +1,19 @@
+# PyCompOSE: manages CompOSE tables
+# Copyright (C) 2022, David Radice <david.radice@psu.edu>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 """
 Utilities to read general purpose (3D) EOS tables
 """
@@ -6,7 +22,7 @@ import h5py
 import numpy as np
 import os
 
-class EOSMetadata:
+class Metadata:
     """
     Class encoding the metadata/indexing used to read the EOS table
 
@@ -16,7 +32,7 @@ class EOSMetadata:
         pairs  : dictionary of particle fractions in the compo table
         quad   : dictionary of isotope fractions in the compo table
     """
-    def __init__(self, thermo=[], pairs=[], quads=[]):
+    def __init__(self, thermo=[], pairs={}, quads={}):
         """
         Initialize the metadata
 
@@ -41,10 +57,12 @@ class EOSMetadata:
         self.pairs = pairs.copy()
         self.quads = quads.copy()
 
-class EOS:
+class Table:
     """
-    This class stores a three-dimensional table in format
-    "General purpose EoS table" from CompOSE
+    This class stores a table in CompOSE format.
+
+    1D, 2D, and 3D tables are treated in the same way, with the only
+    difference that some of the index ranges might be trivial.
 
     Data
 
@@ -65,22 +83,161 @@ class EOS:
 
         inb, iyq, it
 
-    That is, the temperature is the fastest running index
+    That is, the temperature is the fastest running index.
     """
-    def __init__(self, path, metadata: EOSMetadata, dtype=np.float64):
+    def __init__(self, metadata: Metadata, dtype=np.float64):
         """
         Initialize an EOS object
+
+        * metadata : machine readable version of the EOS data sheet
+        * dtype : data type
+        """
+        self.md = metadata
+        self.dtype = dtype
+
+        self.nb = np.empty(0)
+        self.t = np.empty(0)
+        self.yq = np.empty(0)
+        self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
+        self.valid = np.ones(self.shape, dtype=bool)
+
+        self.mn = np.nan
+        self.mp = np.nan
+        self.lepton = False
+
+        self.thermo = {}
+        self.Y, self.A, self.Z = {}, {}, {}
+
+    def compute_cs2(self, floor=None):
+        """
+        Computes the square of the sound speed
+        """
+        P = self.thermo["Q1"]*self.nb[:,np.newaxis,np.newaxis]
+        S = self.thermo["Q2"]
+        u = self.mn*(self.thermo["Q7"] + 1)
+        h = u + self.thermo["Q1"]
+
+        dPdn = P*self.diff_wrt_nb(np.log(P))
+
+        if self.t.shape[0] > 1:
+            dPdt = P*self.diff_wrt_t(np.log(P))
+            dSdn = S*self.diff_wrt_nb(np.log(S))
+            dSdt = S*self.diff_wrt_t(np.log(S))
+
+            self.thermo["cs2"] = (dPdn - dSdn/dSdt*dPdt)/h
+        else:
+            self.thermo["cs2"] = dPdn/h
+
+        if floor is not None:
+            self.thermo["cs2"] = np.maximum(self.thermo["cs2"], floor)
+        self.md.thermo[12] = ("cs2", "sound speed squared [c^2]")
+
+    def check_for_invalid_points(self, check_cs2_min=False, check_cs2_max=True):
+        """
+        Mark invalid points in the table
+        """
+        if check_cs2_min:
+            self.valid = self.valid & (self.thermo["cs2"] > 0)
+        if check_cs2_max:
+            self.valid = self.valid & (self.thermo["cs2"] < 1)
+
+    def diff_wrt_nb(self, Q):
+        """
+        Differentiate a 3D variable w.r.t nb
+
+        This function is optimized for log spacing for nb, but will work with any spacing
+        """
+        log_nb = np.log(self.nb[:,np.newaxis,np.newaxis])
+        dQdn = np.empty_like(Q)
+        dQdn[1:-1,...] = (Q[2:,...] - Q[:-2,...])/(log_nb[2:] - log_nb[:-2])
+        dQdn[0,...] = (Q[1,...] - Q[0,...])/(log_nb[1] - log_nb[0])
+        dQdn[-1,...] = (Q[-1,...] - Q[-2,...])/(log_nb[-1] - log_nb[-2])
+        return dQdn/self.nb[:,np.newaxis,np.newaxis]
+
+    def diff_wrt_t(self, Q):
+        """
+        Differentiate a 3D variable w.r.t T
+
+        This function is optimized for log spacing for T, but will work with any spacing
+
+        NOTE: You will get an error if you try to differentiate w.r.t to T a 1D table
+        """
+        log_t = np.log(self.t[np.newaxis,np.newaxis,:])
+        dQdt = np.empty_like(Q)
+        dQdt[...,1:-1] = (Q[...,2:] - Q[...,:-2])/(log_t[...,2:] - log_t[...,:-2])
+        dQdt[...,0] = (Q[...,1] - Q[...,0])/(log_t[0,0,1] - log_t[0,0,0])
+        dQdt[...,-1] = (Q[...,-1] - Q[...,-2])/(log_t[0,0,-1] - log_t[0,0,-2])
+        return dQdt/self.t[np.newaxis,np.newaxis,:]
+
+    def restrict(self, nb_min=None, nb_max=None, yq_min=None, yq_max=None,
+            t_min=None, t_max=None):
+        """
+        Restrict the table in the given range
+        """
+        if nb_min is not None:
+            assert nb_min < self.nb[-1]
+            in0 = self.nb.searchsorted(nb_min)
+        else:
+            in0 = None
+        if nb_max is not None:
+            in1 = self.nb.searchsorted(nb_max)
+        else:
+            in1 = None
+
+        if yq_min is not None:
+            assert yq_min < self.yq[-1]
+            iy0 = self.yq.searchsorted(yq_min)
+        else:
+            iy0 = None
+        if yq_max is not None:
+            iy1 = self.yq.searchsorted(yq_max)
+        else:
+            iy1 = None
+
+        if t_min is not None:
+            assert t_min < self.t[-1]
+            it0 = self.t.searchsorted(t_min)
+        else:
+            it0 = None
+        if t_max is not None:
+            it1 = self.t.searchsorted(t_max)
+        else:
+            it1 = None
+
+        self.restrict_idx(in0, in1, iy0, iy1, it0, it1)
+
+    def restrict_idx(self, in0=None, in1=None, iy0=None, iy1=None, it0=None, it1=None):
+        """
+        Restrict the table to a given indicial range
+        """
+        self.nb = self.nb[in0:in1]
+        self.yq = self.yq[iy0:iy1]
+        self.t = self.t[it0:it1]
+        self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
+        self.valid = self.valid[in0:in1,iy0:iy1,it0:it1]
+
+        for key in self.thermo.keys():
+            self.thermo[key] = self.thermo[key][in0:in1,iy0:iy1,it0:it1]
+        for key in self.Y.keys():
+            self.Y[key] = self.Y[key][in0:in1,iy0:iy1,it0:it1]
+        for key in self.A.keys():
+            self.A[key] = self.A[key][in0:in1,iy0:iy1,it0:it1]
+        for key in self.Z.keys():
+            self.Z[key] = self.Z[key][in0:in1,iy0:iy1,it0:it1]
+
+    def read(self, path):
+        """
+        Read the table from CompOSE ASCII format
 
         * path : folder containing the EOS in CompOSE format
         """
         self.path = path
-        self.md = metadata
-        self.dtype = dtype
 
-        self.nb = np.loadtxt(os.path.join(path, "eos.nb"), skiprows=2, dtype=dtype)
-        self.t = np.loadtxt(os.path.join(path, "eos.t"), skiprows=2, dtype=dtype)
-        self.yq = np.loadtxt(os.path.join(path, "eos.yq"), skiprows=2, dtype=dtype)
+        self.nb = np.loadtxt(os.path.join(path, "eos.nb"), skiprows=2, dtype=self.dtype)
+        self.t = np.loadtxt(os.path.join(path, "eos.t"), skiprows=2, dtype=self.dtype).reshape(-1)
+        self.yq = np.loadtxt(os.path.join(path, "eos.yq"), skiprows=2, dtype=self.dtype).reshape(-1)
         self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
+        self.valid = np.ones(self.shape, dtype=bool)
 
         L = open(os.path.join(path, "eos.thermo"), "r").readline().split()
         self.mn = float(L[0])
@@ -146,40 +303,21 @@ class EOS:
                         self.Z[name][inb, iyq, it] = Z
                         self.Y[name][inb, iyq, it] = Y
 
-    def diff_wrt_nb(self, Q):
-        dQdn = np.empty_like(Q)
-        dQdn[1:-1,...] = (Q[2:,...] - Q[:-2,...])/(
-            self.nb[2:,np.newaxis,np.newaxis] - self.nb[:-2,np.newaxis,np.newaxis])
-        dQdn[0,...] = (Q[1,...] - Q[0,...])/(self.nb[1] - self.nb[0])
-        dQdn[-1,...] = (Q[-1,...] - Q[-2,...])/(self.nb[-1] - self.nb[-2])
-        return dQdn
-
-    def diff_wrt_t(self, Q):
-        dQdt = np.empty_like(Q)
-        dQdt[...,1:-1] = (Q[...,2:] - Q[...,:-2])/(
-            self.t[np.newaxis,np.newaxis,2:] - self.t[np.newaxis,np.newaxis,:-2])
-        dQdt[...,0] = (Q[...,1] - Q[...,0])/(self.t[1] - self.t[0])
-        dQdt[...,-1] = (Q[...,-1] - Q[...,-2])/(self.t[-1] - self.t[-2])
-        return dQdt
-
-    def compute_cs2(self):
+    def shrink_to_valid_nb(self):
         """
-        Computes the square of the sound speed
+        Restrict the range of nb
         """
-        P = self.thermo["Q1"]*self.nb[:,np.newaxis,np.newaxis]
-        S = self.thermo["Q2"]
-        u = self.mn*(self.thermo["Q7"] + 1)
-        h = u + self.thermo["Q1"] 
+        from .utils import find_valid_region
 
-        dPdn = self.diff_wrt_nb(P)
-        dSdn = self.diff_wrt_nb(S)
-        dPdt = self.diff_wrt_t(P)
-        dSdt = self.diff_wrt_t(S)
+        if np.all(self.valid):
+            return
 
-        self.thermo["cs2"] = (dPdn - dSdn/dSdt*dPdt)/h
-        self.md.thermo[12] = ("cs2", "sound speed squared [c^2]")
+        valid_nb = np.all(self.valid, axis=(1,2))
+        in0, in1 = find_valid_region(valid_nb)
 
-    def write(self, fname, dtype=np.float64):
+        self.restrict_idx(in0=in0, in1=in1)
+
+    def write_hdf5(self, fname, dtype=np.float64):
         """
         Writes the table as an HDF5 file
         """

@@ -1,0 +1,164 @@
+# PyCompOSE: manages CompOSE tables
+# Copyright (C) 2022, David Radice <david.radice@psu.edu>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Tested using: https://compose.obspm.fr/eos/34 and SFHo_hydro_29-Jun-2015.h5
+#
+# This example shows how to import/export CompOSE tables and compute the sound speed
+#
+# Instructions
+# - Create a folder "SFHo" at the same location as this script
+# - Download https://compose.obspm.fr/eos/34 and place it in a folder "SFHo"
+# - Download EOS.tar from https://zenodo.org/record/4159620 to get SFHo_hydro_29-Jun-2015.h5
+# - Run the script
+
+# %%
+import h5py
+import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
+import numpy as np
+
+import os
+SCRIPTDIR = os.path.dirname(os.path.realpath(__file__))
+
+import sys
+sys.path.append(os.path.join(SCRIPTDIR, os.pardir))
+from compose.eos import Metadata, Table
+
+# %%
+md = Metadata(
+    pairs = {
+        0: ("e", "electron"),
+        10: ("n", "neutro"),
+        11: ("p", "proton"),
+        4002: ("He4", "alpha particle"),
+        3002: ("He3", "helium 3"),
+        3001: ("H3", "tritium"),
+        2001: ("H2", "deuteron")
+    },
+    quads = {
+        999: ("N", "average nucleous")
+    }
+)
+eos = Table(md)
+eos.read(os.path.join(SCRIPTDIR, "SFHo"))
+
+# %%
+eos.compute_cs2(floor=1e-6)
+eos.check_for_invalid_points()
+# Remove the highest temperature point
+eos.restrict_idx(it1=-1)
+eos.shrink_to_valid_nb()
+
+# %%
+eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "compose.h5"))
+
+# %%
+print("{} <= nb <= {}".format(eos.nb.min(), eos.nb.max()))
+print("{} <= cs2 <= {}".format(eos.thermo["cs2"].min(), eos.thermo["cs2"].max()))
+
+# %% Load comparison table
+c = 29979245800.0           # CGS
+MeV = 1.60217733e-06        # CGS
+fm = 1e-13                  # CGS
+
+ref_table = h5py.File(os.path.join(SCRIPTDIR, "SFHo", "SFHo_hydro_29-Jun-2015.h5"), "r")
+ref_t = np.array(ref_table["temperature"])
+ref_ye = np.array(ref_table["ye"])
+ref_mb = np.array(ref_table["mass_factor"])
+ref_rho = np.array(ref_table["density"])
+ref_cs2 = np.array(ref_table["cs2"])
+ref_mb = ref_mb*MeV/c**2
+ref_nb = ref_rho/(ref_mb)*fm**3
+
+
+# %% Plot CompOSE EOS in pressure dominated regime
+Y_e = 0.5
+iyq = np.argmin(np.abs(eos.yq - Y_e))
+
+plt.figure()
+plt.plot(eos.t, eos.thermo["Q1"][0,iyq,:]/eos.t**4)
+plt.xlabel(r"$T\ [{\rm MeV}]$")
+plt.ylabel(r"$p/(nb*T^4)\ [{\rm MeV}^3]$")
+plt.xscale("log")
+plt.yscale("log")
+
+
+# %% Compare CompOSE and stallarcollapse.org cs2 at zero density
+Y_e = 0.5
+iyc = np.argmin(np.abs(eos.yq - Y_e))
+iys = np.argmin(np.abs(ref_ye - Y_e))
+
+nb = 1e-8
+inc = np.argmin(np.abs(eos.nb - nb))
+ins = np.argmin(np.abs(ref_nb - nb))
+
+plt.figure()
+plt.plot(ref_t[:], ref_cs2[iys,:,ins], linewidth=3, label="stellarcollapse.org")
+plt.plot(eos.t, eos.thermo["cs2"][inc,iyc,:], label="CompOSE")
+plt.xlabel(r"$T\ [{\rm MeV}]$")
+plt.ylabel(r"$c_s^2/c^2$")
+plt.axhline(1/3, color='k', label=r"$1/3$")
+plt.legend()
+plt.xscale("log")
+plt.yscale("log")
+
+
+# %% Compare CompOSE and stallarcollapse.org cs2 at fixed temperature
+Y_e = 0.1
+iyc = np.argmin(np.abs(eos.yq - Y_e))
+iys = np.argmin(np.abs(ref_ye - Y_e))
+
+T = 10.0
+itc = np.argmin(np.abs(eos.t - T))
+its = np.argmin(np.abs(ref_t - T))
+
+plt.figure()
+plt.title("T = {:.2f}, Y_q = {:.2f}".format(eos.t[itc], eos.yq[iyc]))
+plt.plot(ref_nb, ref_cs2[iys,its,:], linewidth=3, label="stellarcollapse.org")
+plt.plot(eos.nb, eos.thermo["cs2"][:,iyc,itc], label="CompOSE")
+plt.xlabel(r"$nb\ [{\rm fm}^{-3}]$")
+plt.ylabel(r"$c_s^2/c^2$")
+plt.legend()
+plt.xscale("log")
+plt.yscale("log")
+
+
+# %% Plot sound speed for fixed Y_e
+Y_e = 0.1
+iyc = np.argmin(np.abs(eos.yq - Y_e))
+iys = np.argmin(np.abs(ref_ye - Y_e))
+
+plt.figure()
+plt.title("CompOSE - Y_q = {:.2f}".format(eos.yq[iyc]))
+plt.pcolormesh(eos.nb, eos.t, eos.thermo["cs2"][:,iyc,:].T,cmap='jet', norm=LogNorm(1e-2,1))
+plt.colorbar(label=r"$c_s^2$")
+plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
+plt.ylabel(r"$T\ [{\rm MeV}]$")
+plt.xscale("log")
+plt.yscale("log")
+
+plt.figure()
+plt.title("stellarcollapse.org - Y_e = {:.2f}".format(ref_ye[iys]))
+plt.pcolormesh(ref_nb, ref_t, ref_cs2[iys,:,:],cmap='jet', norm=LogNorm(1e-2,1))
+plt.colorbar(label=r"$c_s^2$")
+plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
+plt.ylabel(r"$T\ [{\rm MeV}]$")
+plt.xscale("log")
+plt.yscale("log")
+
+
+# %%
+plt.show()
