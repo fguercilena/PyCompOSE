@@ -52,7 +52,7 @@ The following code computes the sound speed, removes unphysical portions of the 
 
 ```python
 eos.compute_cs2(floor=1e-6)
-eos.check_for_invalid_points()
+eos.validate()
 eos.shrink_to_valid_nb()
 eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "compose.h5"))
 ```
