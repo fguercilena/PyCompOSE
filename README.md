@@ -1,7 +1,9 @@
 # PyCompOSE
 
 A python library to read and manipulate equation of state tables in CompOSE
-ASCII format. Currently supported functionality
+ASCII format.
+
+Currently supported functionality
 
 * Read general 3D tables
 * Compute sound speed

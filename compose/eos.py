@@ -18,7 +18,9 @@
 Utilities to read general purpose (3D) EOS tables
 """
 
+from copy import deepcopy
 import h5py
+from math import pi
 import numpy as np
 import os
 
@@ -85,6 +87,14 @@ class Table:
 
     That is, the temperature is the fastest running index.
     """
+
+    """ multiply to convert MeV --> K """
+    unit_temp  = 1.0/8.617333262e-11
+    """ multiply to convert MeV/fm^3 --> g/cm^3 """
+    unit_dens  = 1.782662696e12
+    """ multiply to convert MeV/fm^3 --> dyn/cm^2 """
+    unit_press = 1.602176634e33
+
     def __init__(self, metadata: Metadata, dtype=np.float64):
         """
         Initialize an EOS object
@@ -99,7 +109,7 @@ class Table:
         self.t = np.empty(0)
         self.yq = np.empty(0)
         self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
-        self.valid = np.ones(self.shape, dtype=bool)
+        self.valid = np.zeros(self.shape, dtype=bool)
 
         self.mn = np.nan
         self.mp = np.nan
@@ -107,6 +117,34 @@ class Table:
 
         self.thermo = {}
         self.Y, self.A, self.Z = {}, {}, {}
+
+    def copy(self, copy_data=True):
+        """
+        Returns a copy of the table
+
+        * copy_data : if False, only the grid and metadata are copied
+        """
+        eos = Table(self.md, self.dtype)
+        eos.nb = self.nb.copy()
+        eos.t = self.t.copy()
+        eos.yq = self.yq.copy()
+        eos.shape = deepcopy(self.shape)
+        eos.valid = self.valid.copy()
+        eos.mn = self.mn
+        eos.mp = self.mp
+        eos.lepton = self.lepton
+
+        if copy_data:
+            for key, data in self.thermo.items():
+                eos.thermo[key] = data.copy()
+            for key, data in self.Y.items():
+                eos.Y[key] = data.copy()
+            for key, data in self.A.items():
+                eos.A[key] = data.copy()
+            for key, data in self.Z.items():
+                eos.Z[key] = data.copy()
+
+        return eos
 
     def compute_cs2(self, floor=None):
         """
@@ -131,15 +169,6 @@ class Table:
         if floor is not None:
             self.thermo["cs2"] = np.maximum(self.thermo["cs2"], floor)
         self.md.thermo[12] = ("cs2", "sound speed squared [c^2]")
-
-    def check_for_invalid_points(self, check_cs2_min=False, check_cs2_max=True):
-        """
-        Mark invalid points in the table
-        """
-        if check_cs2_min:
-            self.valid = self.valid & (self.thermo["cs2"] > 0)
-        if check_cs2_max:
-            self.valid = self.valid & (self.thermo["cs2"] < 1)
 
     def diff_wrt_nb(self, Q):
         """
@@ -168,6 +197,80 @@ class Table:
         dQdt[...,0] = (Q[...,1] - Q[...,0])/(log_t[0,0,1] - log_t[0,0,0])
         dQdt[...,-1] = (Q[...,-1] - Q[...,-2])/(log_t[0,0,-1] - log_t[0,0,-2])
         return dQdt/self.t[np.newaxis,np.newaxis,:]
+
+    def make_beta_eq_table(self):
+        """
+        Create a new table in which yq is set by beta equilibrium
+
+        Remark the new table will be invalidated
+        """
+        from .utils import find_beta_eq
+        from .utils import interpolator
+
+        def interp_to_given_yp(var3d, yq_eq):
+            out = np.empty_like(yq_eq)
+            for inb in range(var3d.shape[0]):
+                for it in range(var3d.shape[2]):
+                    f = interpolator(self.yq, var3d[inb,:,it])
+                    out[inb,0,it] = f(yq_eq[inb,0,it])
+            return out
+
+        yq_eq = np.zeros((self.nb.shape[0], 1, self.t.shape[0]), dtype=self.dtype)
+        for inb in range(len(self.nb)):
+            for it in range(len(self.t)):
+                # This is divided by the neutron mass, but it does not matter
+                mu_l = self.thermo["Q5"]
+                yq_eq[inb, 0, it] = find_beta_eq(self.yq, mu_l[inb, :, it])
+
+        eos = self.copy(copy_data=False)
+        eos.yq = np.zeros(1, dtype=self.dtype)
+        eos.shape = (eos.nb.shape[0], 1, eos.t.shape[0])
+
+        for key in self.thermo.keys():
+            eos.thermo[key] = interp_to_given_yp(self.thermo[key], yq_eq)
+        for key in self.Y.keys():
+            eos.Y[key] = interp_to_given_yp(self.Y[key], yq_eq)
+        for key in self.A.keys():
+            eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+        for key in self.Z.keys():
+            eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+
+        return eos
+
+    def remove_photons(self):
+        """
+        Generate a new table without photons
+
+        This takes care of removing photons from Q1, Q2, Q6, and Q7,
+        but not from other quantities
+        """
+        nb = self.nb[:,np.newaxis,np.newaxis]
+        t = self.t[np.newaxis,np.newaxis,:]
+
+        # photon energy density [MeV fm^-3]
+        e_ph = pi**2/15*t**4
+        # photon pressure [MeV fm^-3]
+        p_ph = 1/3*e_ph
+        # photon free energy density [MeV fm^-3]
+        f_ph = -p_ph
+        # photon entropy density [fm^-3]
+        s_ph = 4*pi**2/45*t**3
+
+        eos = self.copy()
+
+        p = self.thermo["Q1"]*nb
+        eos.thermo["Q1"] = (p - p_ph)/nb
+
+        s = self.thermo["Q2"]*nb
+        eos.thermo["Q2"] = (s - s_ph)/nb
+
+        f = self.mn*nb*(self.thermo["Q6"] + 1)
+        eos.thermo["Q6"] = (f - f_ph)/(self.mn*nb)
+
+        e = self.mn*nb*(self.thermo["Q7"] + 1)
+        eos.thermo["Q7"] = (e - e_ph)/(self.mn*nb)
+
+        return eos
 
     def restrict(self, nb_min=None, nb_max=None, yq_min=None, yq_max=None,
             t_min=None, t_max=None):
@@ -317,6 +420,35 @@ class Table:
 
         self.restrict_idx(in0=in0, in1=in1)
 
+    def slice_at_t_idx(self, it):
+        """
+        Constructs a new table at a fixed temperature self.t[it]
+        """
+        eos = self.copy(copy_data=False)
+        eos.t = np.array(eos.t[it], dtype=self.dtype).reshape((-1))
+        eos.shape = (eos.nb.shape[0], eos.yq.shape[0], 1)
+
+        for key in self.thermo.keys():
+            eos.thermo[key] = self.thermo[key][:,:,it].reshape(eos.shape)
+        for key in self.Y.keys():
+            eos.Y[key] = self.Y[key][:,:,it].reshape(eos.shape)
+        for key in self.A.keys():
+            eos.A[key] = self.A[key][:,:,it].reshape(eos.shape)
+        for key in self.Z.keys():
+            eos.Z[key] = self.Z[key][:,:,it].reshape(eos.shape)
+
+        return eos
+
+    def validate(self, check_cs2_min=False, check_cs2_max=True):
+        """
+        Mark invalid points in the table
+        """
+        self.valid[:] = True
+        if check_cs2_min:
+            self.valid = self.valid & (self.thermo["cs2"] > 0)
+        if check_cs2_max:
+            self.valid = self.valid & (self.thermo["cs2"] < 1)
+
     def write_hdf5(self, fname, dtype=np.float64):
         """
         Writes the table as an HDF5 file
@@ -365,3 +497,18 @@ class Table:
             dfile[key].attrs["desc"] = desc
 
         dfile.close()
+
+    def write_lorene(self, fname):
+        """
+        Export the table in LORENE format. This is only possible for 1D tables.
+        """
+        assert self.shape[1] == 1
+        assert self.shape[2] == 1
+
+        with open(fname, "w") as f:
+            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % len(self.nb))
+            for i in range(len(self.nb)):
+                nb = self.nb[i]
+                e = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
+                p = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
+                f.write("%d %.15e %.15e %.15e\n" % (i, nb, e, p))

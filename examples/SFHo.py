@@ -57,13 +57,22 @@ eos.read(os.path.join(SCRIPTDIR, "SFHo"))
 
 # %%
 eos.compute_cs2(floor=1e-6)
-eos.check_for_invalid_points()
+eos.validate()
 # Remove the highest temperature point
 eos.restrict_idx(it1=-1)
 eos.shrink_to_valid_nb()
 
 # %%
-eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "compose.h5"))
+#eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo.h5"))
+
+# %% Take the lowest T slice of the EOS
+eos_cold = eos.slice_at_t_idx(0)
+# %% Find beta equilibrium
+eos_cold = eos_cold.make_beta_eq_table()
+
+# %%
+eos_cold.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo_T0.1_beta.h5"))
+eos_cold.write_lorene(os.path.join(SCRIPTDIR, "SFHo", "SFHo_T0.1_beta.lorene"))
 
 # %%
 print("{} <= nb <= {}".format(eos.nb.min(), eos.nb.max()))
@@ -158,6 +167,21 @@ plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
 plt.ylabel(r"$T\ [{\rm MeV}]$")
 plt.xscale("log")
 plt.yscale("log")
+
+
+# %% Check beta equilibrium
+ref_eq_rho, ref_eq_Y_e = np.loadtxt(os.path.join(SCRIPTDIR, "SFHo", "SFHo_29-Jul-2022.pizza"),
+        usecols=(0,6), skiprows=5, unpack=True)
+ref_eq_rho /= 1e3
+
+plt.figure()
+plt.title("beta-equilibrium")
+plt.plot(ref_eq_rho, ref_eq_Y_e, label="eos_tools", linewidth=3)
+plt.plot(eos_cold.mn*eos_cold.nb*Table.unit_dens, eos_cold.Y["e"].flatten(), label="PyCompOSE")
+plt.xscale("log")
+plt.xlabel(r"$\rho [{\rm g}\ {\rm cm}^{-3}]$")
+plt.ylabel(r"$Y_e^\beta$")
+plt.legend()
 
 
 # %%

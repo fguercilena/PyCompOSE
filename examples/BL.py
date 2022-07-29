@@ -50,9 +50,10 @@ eos.read(os.path.join(SCRIPTDIR, "BL"))
 
 # %%
 eos.compute_cs2(floor=1e-6)
-eos.check_for_invalid_points()
+eos.validate()
 eos.shrink_to_valid_nb()
-eos.write_hdf5(os.path.join(SCRIPTDIR, "BL", "compose.h5"))
+eos.write_hdf5(os.path.join(SCRIPTDIR, "BL", "BL.h5"))
+eos.write_lorene(os.path.join(SCRIPTDIR, "BL", "BL.lorene"))
 
 # %%
 print("{} <= nb <= {}".format(eos.nb.min(), eos.nb.max()))
@@ -63,6 +64,15 @@ plt.figure()
 plt.loglog(eos.nb, eos.thermo["Q1"][:,0,0]*eos.nb)
 plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
 plt.ylabel(r"$p\ [{\rm MeV}\ {\rm fm}^{-3}]$")
+
+# %%
+plt.figure()
+plt.plot(eos.nb, eos.Y["e"][:,0,0], label=r"$Y_e$")
+plt.plot(eos.nb, eos.Y["mu"][:,0,0], label=r"$Y_\mu$")
+plt.plot(eos.nb, eos.Y["n"][:,0,0], label=r"$Y_n$")
+plt.plot(eos.nb, eos.Y["p"][:,0,0], label=r"$Y_p$")
+plt.legend()
+plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
 
 # %%
 plt.figure()
