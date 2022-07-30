@@ -17,7 +17,7 @@ Use at your own risk.
 
 All CompOSE tables come with a data sheet listing quantities and conventions
 used in the table. You will need to create a machine readable version of this
-data sheet using the EOSMetadata class:
+data sheet using the `Metadata` class:
 
 ```python
 from compose.eos import Metadata, Table
@@ -39,7 +39,7 @@ md = Metadata(
 ```
 
 You do not have to list all particle species and their indices in the metadata,
-but PyCompOSE will only read those quantities listed in the `EOSMetadata`.
+but PyCompOSE will only read those quantities listed in the `Metadata`.
 
 Afterwards, you can read CompOSE tables as
 
@@ -57,7 +57,7 @@ eos.shrink_to_valid_nb()
 eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "compose.h5"))
 ```
 
-All `EOS` quantities are stored in easily accessible `numpy` arrays:
+All `Table` quantities are stored in easily accessible `numpy` arrays:
 
 ```python
 # Print range of cs^2
