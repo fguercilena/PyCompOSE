@@ -63,7 +63,7 @@ eos.restrict_idx(it1=-1)
 eos.shrink_to_valid_nb()
 
 # %%
-#eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo.h5"))
+eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo.h5"))
 
 # %% Take the lowest T slice of the EOS
 eos_cold = eos.slice_at_t_idx(0)
@@ -77,6 +77,7 @@ eos_cold.write_lorene(os.path.join(SCRIPTDIR, "SFHo", "SFHo_T0.1_beta.lorene"))
 # %%
 print("{} <= nb <= {}".format(eos.nb.min(), eos.nb.max()))
 print("{} <= cs2 <= {}".format(eos.thermo["cs2"].min(), eos.thermo["cs2"].max()))
+
 
 # %% Load comparison table
 c = 29979245800.0           # CGS
@@ -182,6 +183,43 @@ plt.xscale("log")
 plt.xlabel(r"$\rho [{\rm g}\ {\rm cm}^{-3}]$")
 plt.ylabel(r"$Y_e^\beta$")
 plt.legend()
+
+
+# %% Interpolate to a range in the table
+nb = 10.0**np.linspace(-5, 0.0, 200)
+t  = 10.0**np.linspace(-1, 2, 100)
+yq = eos.yq.copy()
+eos_interp = eos.interpolate(nb, yq, t, method="linear")
+eos_interp.compute_cs2()
+eos_interp.validate()
+eos_interp.shrink_to_valid_nb()
+
+# %%
+Y_e = 0.1
+iy0 = np.argmin(np.abs(eos.yq - Y_e))
+iy1 = np.argmin(np.abs(eos_interp.yq - Y_e))
+
+T = 10.0
+it0 = np.argmin(np.abs(eos.t - T))
+it1 = np.argmin(np.abs(eos_interp.t - T))
+
+plt.figure()
+plt.plot(eos.nb, eos.thermo["Q1"][:,iy0,it0]*eos.nb, label="Original", linewidth=3)
+plt.plot(eos_interp.nb, eos_interp.thermo["Q1"][:,iy1,it1]*eos_interp.nb, label="Interp")
+plt.xscale("log")
+plt.yscale("log")
+plt.legend()
+plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
+plt.ylabel(r"$p\ [{\rm MeV}\ {\rm fm}^{-3}]$")
+
+plt.figure()
+plt.plot(eos.nb, eos.thermo["cs2"][:,iy0,it0], label="Original", linewidth=3)
+plt.plot(eos_interp.nb, eos_interp.thermo["cs2"][:,iy1,it1], label="Interp")
+plt.xscale("log")
+plt.yscale("log")
+plt.legend()
+plt.xlabel(r"$n_b\ [{\rm fm}^{-3}]$")
+plt.ylabel(r"$c_s^2/c^2$")
 
 
 # %%

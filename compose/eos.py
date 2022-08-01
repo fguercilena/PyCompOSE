@@ -198,6 +198,68 @@ class Table:
         dQdt[...,-1] = (Q[...,-1] - Q[...,-2])/(log_t[0,0,-1] - log_t[0,0,-2])
         return dQdt/self.t[np.newaxis,np.newaxis,:]
 
+    def interpolate(self, nb_new, yq_new, t_new, method="cubic"):
+        """
+        Generate a new table by interpolating the EOS to the given grid
+
+        * nb : 1D array with all the number densities
+        * yq : 1D array with all the charge fractions
+        * t  : 1D array with all the temperatures
+
+        * method : interpolation method, is passed to scipy.RegularGridInterpolator
+
+        NOTE: this only works for 3D tables
+        """
+        assert self.shape[0] > 1
+        assert self.shape[1] > 1
+        assert self.shape[2] > 1
+
+        from scipy.interpolate import RegularGridInterpolator
+
+        eos = Table(self.md, self.dtype)
+        eos.nb = nb_new.copy()
+        eos.t = t_new.copy()
+        eos.yq = yq_new.copy()
+        eos.shape = deepcopy((nb_new.shape[0], yq_new.shape[0], t_new.shape[0]))
+        eos.valid = np.ones(eos.shape, dtype=bool)
+        eos.mn = self.mn
+        eos.mp = self.mp
+        eos.lepton = self.lepton
+
+        log_nb = np.log(self.nb)
+        log_t = np.log(self.t)
+
+        log_nb_new, yq_new, log_t_new = np.meshgrid(
+                np.log(nb_new), yq_new, np.log(t_new), indexing='ij')
+        xi = np.column_stack((log_nb_new.flatten(), yq_new.flatten(),
+                log_t_new.flatten()))
+
+        def interp_var_to_grid(var3d, log=False):
+            if log:
+                myvar = np.log(var3d)
+            else:
+                myvar = var3d
+            func = RegularGridInterpolator((log_nb, self.yq, log_t),
+                    myvar, method=method)
+            res = func(xi).reshape(eos.shape)
+            if log:
+                return np.exp(res)
+            return res
+
+        for key in self.thermo.keys():
+            if key == "Q1":
+                eos.thermo[key] = interp_var_to_grid(self.thermo[key], True)
+            else:
+                eos.thermo[key] = interp_var_to_grid(self.thermo[key])
+        for key in self.Y.keys():
+            eos.Y[key] = interp_var_to_grid(self.Y[key])
+        for key in self.A.keys():
+            eos.A[key] = interp_var_to_grid(self.A[key])
+        for key in self.Z.keys():
+            eos.Z[key] = interp_var_to_grid(self.Z[key])
+
+        return eos
+
     def make_beta_eq_table(self):
         """
         Create a new table in which yq is set by beta equilibrium
