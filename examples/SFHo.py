@@ -73,6 +73,7 @@ eos_cold = eos_cold.make_beta_eq_table()
 # %%
 eos_cold.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo_T0.1_beta.h5"))
 eos_cold.write_lorene(os.path.join(SCRIPTDIR, "SFHo", "SFHo_T0.1_beta.lorene"))
+eos_cold.write_number_fractions(os.path.join(SCRIPTDIR, "SFHo", "SFHo_T0.1_beta_Y.out"))
 
 # %%
 print("{} <= nb <= {}".format(eos.nb.min(), eos.nb.max()))
