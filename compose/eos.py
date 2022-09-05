@@ -198,6 +198,30 @@ class Table:
         dQdt[...,-1] = (Q[...,-1] - Q[...,-2])/(log_t[0,0,-1] - log_t[0,0,-2])
         return dQdt/self.t[np.newaxis,np.newaxis,:]
 
+    def eval_given_rtx(self, var, nb, yq, t):
+        """
+        Interpolates a given thermodynamic variable at the wanted locations
+
+        * var : a 3D array with the data to interpolate
+        * nb  : a 1D array of density points
+        * t   : a 1D array of temperature points
+        * yq  : a 1D array of charge fraction points
+
+        NOTE: This is not meant to be particularly efficient
+        """
+        from scipy.interpolate import RegularGridInterpolator
+
+        assert nb.shape == t.shape == yq.shape
+
+        my_lnb = np.log(self.nb)
+        my_lt = np.log(self.t)
+        func = RegularGridInterpolator((my_lnb, self.yq, my_lt), var)
+
+        xi = np.column_stack((np.log(nb).flatten(), yq.flatten(), np.log(t).flatten()))
+        out = func(xi).reshape(nb.shape)
+
+        return out
+
     def interpolate(self, nb_new, yq_new, t_new, method="cubic"):
         """
         Generate a new table by interpolating the EOS to the given grid

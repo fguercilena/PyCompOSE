@@ -186,13 +186,21 @@ plt.legend()
 
 
 # %% Interpolate to a range in the table
-nb = 10.0**np.linspace(-5, 0.0, 200)
-t  = 10.0**np.linspace(-1, 2, 100)
-yq = eos.yq.copy()
+nb = 10.0**np.linspace(-5, 0.0, 5)
+t  = 10.0**np.linspace(-1, 2, 10)
+yq = np.linspace(eos.yq[0] ,eos.yq[-1], 3)
 eos_interp = eos.interpolate(nb, yq, t, method="linear")
-eos_interp.compute_cs2()
-eos_interp.validate()
-eos_interp.shrink_to_valid_nb()
+eos_interp.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo_tiny.h5"))
+
+# %% Print the EOS at one point
+log_P = np.log(eos_interp.thermo["Q1"]*nb[:,np.newaxis,np.newaxis])
+nb_pt = np.array([0.5])
+yq_pt = np.array([0.3])
+T_pt = np.array([10.0])
+P_interp = np.exp(eos_interp.eval_given_rtx(log_P, nb_pt, yq_pt, T_pt))
+print("P(n = {:.2f}, yq = {:.2f}, T = {}) = {:.15e} [MeV fm^-3]".format(
+    nb_pt[0], yq_pt[0], T_pt[0], P_interp[0]))
+
 
 # %%
 Y_e = 0.1
