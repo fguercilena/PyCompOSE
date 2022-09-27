@@ -598,7 +598,7 @@ class Table:
                 e  = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
                 f.write("%d %.15e %.15e %.15e\n" % (i, nb, e, p))
-    
+
     def write_number_fractions(self, fname):
         """
         Export an ASCII table with number fractions to complement the LORENE one. This is only possible for 1D tables.
@@ -609,7 +609,7 @@ class Table:
         with open(fname, "w") as f:
             keys = list(self.Y.keys())
             L    = len(self.Y[keys[0]])
-            
+
             f.write("#\n#\n#\n#\n#\n%d" %L)
             for key in keys: f.write(" Y_%s" %key)
             f.write("\n#\n#\n#\n")
