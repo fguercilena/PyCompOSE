@@ -69,3 +69,6 @@ with open("ic_file.txt", "w") as ofile:
                 e = Table.unit_energy*eos.nb[inb]*eos.mn*(eos.thermo["Q7"][inb,iyq,it] + 1)
                 ofile.write("{:e}\t{:e}\t{:e}\n".format(rho0, yq, e))
 ofile.close()
+
+with open("shape.txt", "w") as ofile:
+    ofile.write("{} {} {}".format(*eos.shape))

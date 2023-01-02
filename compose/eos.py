@@ -603,7 +603,8 @@ class Table:
 
     def write_number_fractions(self, fname):
         """
-        Export an ASCII table with number fractions to complement the LORENE one. This is only possible for 1D tables.
+        Export an ASCII table with number fractions to complement the LORENE one.
+        This is only possible for 1D tables.
         """
         assert self.shape[1] == 1
         assert self.shape[2] == 1
