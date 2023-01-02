@@ -92,6 +92,8 @@ class Table:
     unit_temp  = 1.0/8.617333262e-11
     """ multiply to convert MeV/fm^3 --> g/cm^3 """
     unit_dens  = 1.782662696e12
+    """ multiply to convert MeV/fm^3 --> erg/cm^3 """
+    unit_energy = 1.6021773299709372e33
     """ multiply to convert MeV/fm^3 --> dyn/cm^2 """
     unit_press = 1.602176634e33
 
