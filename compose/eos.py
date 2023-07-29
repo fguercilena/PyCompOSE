@@ -353,10 +353,10 @@ class Table:
         eos.thermo["Q2"] = (s - s_ph)/nb
 
         f = self.mn*nb*(self.thermo["Q6"] + 1)
-        eos.thermo["Q6"] = (f - f_ph)/(self.mn*nb)
+        eos.thermo["Q6"] = (f - f_ph)/(self.mn*nb) - 1
 
         e = self.mn*nb*(self.thermo["Q7"] + 1)
-        eos.thermo["Q7"] = (e - e_ph)/(self.mn*nb)
+        eos.thermo["Q7"] = (e - e_ph)/(self.mn*nb) - 1
 
         return eos
 
