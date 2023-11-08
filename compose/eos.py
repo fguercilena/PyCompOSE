@@ -436,7 +436,9 @@ class Table:
         self.lepton = bool(L[2])
 
         self.__read_thermo_entries()
-        self.__read_compo_entries()
+
+        if os.path.exists(os.path.join(self.path, "eos.compo")):
+            self.__read_compo_entries()
 
     def __read_thermo_entries(self):
         """
