@@ -626,7 +626,7 @@ class Table:
         for name, desc in self.md.micro.values():
             dfile.create_dataset(name, dtype=dtype, data=self.qK[name],
                 compression="gzip", compression_opts=9)
-            dfile[key].attrs["desc"] = desc
+            dfile[name].attrs["desc"] = desc
 
         dfile.close()
 
