@@ -100,3 +100,31 @@ def find_beta_eq(yq, mu_l, options={'xatol': 1e-6, 'maxiter': 100}):
     res = minimize_scalar(f, bounds=(yq[0], yq[-1]), method='bounded',
     options=options)
     return res.x
+
+def read_micro_composite_index(Ki):
+    """
+    Convert a composite index Ki into a tuple (name, desc) for eos.micro quantites.
+    """
+
+
+    # Abridged copy of table 3.3 in CompOSE manual v3
+    dense_matter_fermions = {0:  ("e",  "electron"),
+                             1:  ("mu", "muon"),
+                             10: ("n",  "neutron"),
+                             11: ("p",  "proton")}
+
+    # Abridged copy of table 7.5 in CompOSE manual v3
+    microscopic_quantites = {40: ("mL_{0:s}", "Effective {1:s} Landau mass with respect to particle mass: mL_{0:s} / m_{0:s} []"),
+                             41: ("mD_{0:s}", "Effective {1:s} Dirac mass with respect to particle mass: mD_{0:s} / m_{0:s} []"),
+                             50: ("U_{0:s}", "Non-relativistic {1:s} single-particle potential: U_{0:s} [MeV]"),
+                             51: ("V_{0:s}", "Relativistic {1:s} vector self-energy: V_{0:s} [MeV]"),
+                             52: ("S_{0:s}", "Relativistic {1:s} scalar self-energy: S_{0:s} [MeV]")}
+
+    Ii = Ki//1000
+    Ji = Ki - 1000*Ii
+
+    particle_names = dense_matter_fermions[Ii]
+    variable_symbol, variable_description = microscopic_quantites[Ji]
+    variable_names = (variable_symbol.format(*particle_names), variable_description.format(*particle_names))
+
+    return variable_names

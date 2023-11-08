@@ -34,15 +34,17 @@ class Metadata:
         pairs  : dictionary of particle fractions in the compo table
         quad   : dictionary of isotope fractions in the compo table
     """
-    def __init__(self, thermo=[], pairs={}, quads={}):
+    def __init__(self, thermo=[], pairs={}, quads={}, micro={}):
         """
         Initialize the metadata
 
         * thermo : list of additional (EOS specific) thermo quantities
         * pairs  : additional particles
         * quads  : additional isotopes
+        * micro  : microphysics quantites
 
-        All inputs are lists of tuples [(name, desc)]
+        thermo is a list of tuples [(name, desc)]
+        Other inputs are dictionaries of tuples {index: (name, desc)}
         """
         self.thermo = {
             1: ("Q1", "pressure over number density: p/nb [MeV]"),
@@ -58,6 +60,7 @@ class Metadata:
 
         self.pairs = pairs.copy()
         self.quads = quads.copy()
+        self.micro = micro.copy()
 
 class Table:
     """
@@ -75,6 +78,7 @@ class Table:
         Y      : dictionary of 3D arrays containing the number fractions
         A      : dictionary of 3D arrays containing the average mass of each isotope
         Z      : dictionary of 3D arrays containing the average charge of each isotope
+        qK     : dictionary of 3D arrays containing the microphysics quantites
 
     Metadata
 
@@ -119,6 +123,7 @@ class Table:
 
         self.thermo = {}
         self.Y, self.A, self.Z = {}, {}, {}
+        self.qK = {}
 
     def copy(self, copy_data=True):
         """
@@ -145,6 +150,8 @@ class Table:
                 eos.A[key] = data.copy()
             for key, data in self.Z.items():
                 eos.Z[key] = data.copy()
+            for key, data in self.qK.items():
+                eos.qK[key] = data.copy()
 
         return eos
 
@@ -283,6 +290,8 @@ class Table:
             eos.A[key] = interp_var_to_grid(self.A[key])
         for key in self.Z.keys():
             eos.Z[key] = interp_var_to_grid(self.Z[key])
+        for key in self.qK.keys():
+            eos.qK[key] = interp_var_to_grid(self.qK[key])
 
         return eos
 
@@ -322,6 +331,8 @@ class Table:
             eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
         for key in self.Z.keys():
             eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+        for key in self.qK.keys():
+            eos.qK[key] = interp_to_given_yp(self.qK[key], yq_eq)
 
         return eos
 
@@ -415,6 +426,8 @@ class Table:
             self.A[key] = self.A[key][in0:in1,iy0:iy1,it0:it1]
         for key in self.Z.keys():
             self.Z[key] = self.Z[key][in0:in1,iy0:iy1,it0:it1]
+        for key in self.qK.keys():
+            self.qK[key] = self.qK[key][in0:in1,iy0:iy1,it0:it1]
 
     def read(self, path):
         """
@@ -439,6 +452,9 @@ class Table:
 
         if os.path.exists(os.path.join(self.path, "eos.compo")):
             self.__read_compo_entries()
+        
+        if os.path.exists(os.path.join(self.path, "eos.micro")):
+            self.__read_micro_entries()
 
     def __read_thermo_entries(self):
         """
@@ -496,6 +512,25 @@ class Table:
                         self.Z[name][inb, iyq, it] = Z
                         self.Y[name][inb, iyq, it] = Y
 
+    def __read_micro_entries(self):
+        """
+        Parse eos.micro using the given metadata key
+        """
+        self.qK = {}
+        for name, desc in self.md.micro.values():
+            self.qK[name] = np.zeros(self.shape, dtype=self.dtype)
+        with open(os.path.join(self.path, "eos.micro"), "r") as cfile:
+            for line in cfile:
+                L = line.split()
+                it, inb, iyq = int(L[0])-1, int(L[1])-1, int(L[2])-1
+                Nmicro = int(L[3])
+                ix = 4
+                for im in range(Nmicro):
+                    K, q = int(L[ix]), float(L[ix + 1])
+                    ix += 2
+                    if K in self.md.micro:
+                        self.qK[self.md.micro[K][0]][inb, iyq, it] = q
+                        
     def shrink_to_valid_nb(self):
         """
         Restrict the range of nb
@@ -526,6 +561,8 @@ class Table:
             eos.A[key] = self.A[key][:,:,it].reshape(eos.shape)
         for key in self.Z.keys():
             eos.Z[key] = self.Z[key][:,:,it].reshape(eos.shape)
+        for key in self.qK.keys():
+            eos.qK[key] = self.qK[key][:,:,it].reshape(eos.shape)
 
         return eos
 
@@ -583,6 +620,11 @@ class Table:
 
             key = "Z[{}]".format(name)
             dfile.create_dataset(key, dtype=dtype, data=self.Z[name],
+                compression="gzip", compression_opts=9)
+            dfile[key].attrs["desc"] = desc
+
+        for name, desc in self.md.micro.values():
+            dfile.create_dataset(name, dtype=dtype, data=self.qK[name],
                 compression="gzip", compression_opts=9)
             dfile[key].attrs["desc"] = desc
 
