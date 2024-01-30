@@ -101,7 +101,7 @@ class Table:
     """ multiply to convert MeV/fm^3 --> dyn/cm^2 """
     unit_press = 1.602176634e33
 
-    def __init__(self, metadata: Metadata, dtype=np.float64):
+    def __init__(self, metadata:Metadata = Metadata(), dtype=np.float64):
         """
         Initialize an EOS object
 
@@ -230,6 +230,105 @@ class Table:
         out = func(xi).reshape(nb.shape)
 
         return out
+
+    def get_bilby_eos_table(self):
+        """
+        Create a bilby TabularEOS object with the EOS
+
+        NOTE: This only works for 1D tables
+        """
+        assert self.shape[1] == self.shape[2] == 1
+
+        from bilby.gw.eos.eos import TabularEOS, conversion_dict
+
+        # Energy density and pressure in CGS
+        e  = Table.unit_dens*self.nb[:]*self.mn*(self.thermo["Q7"][:,0,0] + 1)
+        p  = Table.unit_press*self.thermo["Q1"][:,0,0]*self.nb[:]
+
+        # Convert to Bilby units (G = c = 1, 1 meter = 1)
+        e = e/conversion_dict["density"]["cgs"]
+        p = p/conversion_dict["pressure"]["cgs"]
+        table = np.column_stack((p, e))
+
+        return TabularEOS(table, sampling_flag=True)
+
+    def get_bilby_eos_family(self, npts=500):
+        """
+        Creates a bilby EOSFamily (a TOV sequence) for the EOS
+
+        * npts : number of points on the TOV sequence
+
+        NOTE: This only works for 1D tables
+        """
+        assert self.shape[1] == self.shape[2] == 1
+        from bilby.gw.eos import EOSFamily
+        return EOSFamily(self.get_bilby_eos_table(), npts=npts)
+
+    def integrate_tov(self, rhoc):
+        """
+        Integrates the TOV equation for given central densities
+
+        * rhoc : central energy density in MeV/fm^3
+
+        Returns an object with the following attributes
+
+        * nb     : central density in 1/fm^3
+        * rho    : central energy density in MeV/fm^3
+        * p      : central pressure in MeV/fm^3
+        * K      : compressibility dp/dnb at the center
+        * mass   : mass in solar masses
+        * rad    : radius in km
+        * c      : compactness
+        * k2     : Love number
+        * lmbda  : Tidal deformability coefficient
+
+        NOTE: This requires bilby to be available and works for 1D tables only
+        """
+        class TOV:
+            pass
+
+        assert self.shape[1] == self.shape[2] == 1
+
+        from bilby.gw.eos.eos import IntegrateTOV, conversion_dict
+        from .utils import interpolator
+
+        if not hasattr(rhoc, "__len__"):
+            rhoc = [ rhoc ]
+
+        eos = self.get_bilby_eos_table()
+
+        mass, radius, compact, k2love_number, tidal_deformability = [], [], [], [], []
+        for rc in rhoc:
+            rc = (Table.unit_dens/conversion_dict["density"]["cgs"])*rc
+            tov_solver = IntegrateTOV(eos, rc)
+
+            m, r, k2 = tov_solver.integrate_TOV()
+
+            lmbda = 2./3. * k2 * (r/m)**5
+
+            mass.append(m * conversion_dict["mass"]["m_sol"])
+            radius.append(r * conversion_dict["radius"]["km"])
+            compact.append(m/r)
+            k2love_number.append(k2)
+            tidal_deformability.append(lmbda)
+
+        tov = TOV()
+        tov.rho = np.array(rhoc)
+        tov.mass = np.array(mass)
+        tov.rad = np.array(radius)
+        tov.c = np.array(compact)
+        tov.k2 = np.array(k2love_number)
+        tov.lmbda = np.array(tidal_deformability)
+
+        nb_from_e = interpolator(self.nb[:]*self.mn*(self.thermo["Q7"][:,0,0] + 1), self.nb)
+        tov.nb = nb_from_e(tov.rho)
+
+        p_from_nb = interpolator(self.nb[:], self.thermo["Q1"][:,0,0]*self.nb[:])
+        tov.p = p_from_nb(tov.nb)
+        # K = 9*dp/dn
+        tov.K = 9*p_from_nb(tov.nb, 1)
+
+        return tov
 
     def interpolate(self, nb_new, yq_new, t_new, method="cubic"):
         """
@@ -452,7 +551,7 @@ class Table:
 
         if os.path.exists(os.path.join(self.path, "eos.compo")):
             self.__read_compo_entries()
-        
+
         if os.path.exists(os.path.join(self.path, "eos.micro")):
             self.__read_micro_entries()
 
@@ -530,7 +629,7 @@ class Table:
                     ix += 2
                     if K in self.md.micro:
                         self.qK[self.md.micro[K][0]][inb, iyq, it] = q
-                        
+
     def shrink_to_valid_nb(self):
         """
         Restrict the range of nb
