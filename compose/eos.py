@@ -186,6 +186,26 @@ class Table:
             self.thermo["cs2"] = np.maximum(self.thermo["cs2"], floor)
         self.md.thermo[12] = ("cs2", "sound speed squared [c^2]")
 
+    def compute_abar(self):
+        """
+        Computes the average mass number
+        """
+        self.md.micro[10] = ("Abar", "average mass number")
+        self.qK["Abar"] = sum(
+            self.Y[nuc] for nuc in self.Y if nuc not in ["e", "mu", "tau"]
+        )
+        mask = self.qK["Abar"] <= 0
+        if np.any(mask):
+            print(f"sum(Y) <= 0 for {mask.sum()} points")
+
+        self.qK["Abar"][mask] = 1
+
+        self.qK["Abar"] = 1.0 / self.qK["Abar"]
+        assert np.all(
+            phys := (self.qK["Abar"] >= 0.9999)
+        ), f"Unphysical Abar in {np.sum(~phys)} points"
+        self.qK["Abar"] = np.clip(self.qK["Abar"], 1.0, None)
+
     def diff_wrt_nb(self, Q):
         """
         Differentiate a 3D variable w.r.t nb
@@ -517,9 +537,17 @@ class Table:
             eos.md.pairs[1] = ("e", "electron/charge/lepton fraction")
             eos.Y['e'] = yq_eq
         for key in self.A.keys():
-            eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+            try:
+                eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+            except ValueError:
+                print("Could not interpolate A[{}]".format(key))
+                eos.A[key] = np.ones_like(yq_eq)
         for key in self.Z.keys():
-            eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+            try:
+                eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+            except ValueError:
+                print("Could not interpolate Z[{}]".format(key))
+                eos.Z[key] = np.ones_like(yq_eq)
         for key in self.qK.keys():
             eos.qK[key] = interp_to_given_yp(self.qK[key], yq_eq)
 

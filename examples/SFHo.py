@@ -57,6 +57,7 @@ eos.read(os.path.join(SCRIPTDIR, "SFHo"))
 
 # %%
 eos.compute_cs2(floor=1e-6)
+eos.compute_abar()
 eos.validate()
 # Remove the highest temperature point
 eos.restrict_idx(it1=-1)
