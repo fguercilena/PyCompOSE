@@ -675,11 +675,7 @@ class Table:
         if check_cs2_max:
             self.valid = self.valid & (self.thermo["cs2"] < 1)
 
-    def write_hdf5(self, fname, dtype=np.float64):
-        """
-        Writes the table as an HDF5 file
-        """
-        dfile = h5py.File(fname, "w")
+    def _write_data(self, dfile, dtype):
         dfile.create_dataset("nb", dtype=dtype, data=self.nb,
             compression="gzip", compression_opts=9)
         dfile.create_dataset("t", dtype=dtype, data=self.t,
@@ -727,7 +723,23 @@ class Table:
                 compression="gzip", compression_opts=9)
             dfile[name].attrs["desc"] = desc
 
-        dfile.close()
+    def write_hdf5(self, fname, dtype=np.float64):
+        """
+        Writes the table as an HDF5 file
+        """
+        with h5py.File(fname, "w") as dfile:
+            self._write_data(dfile, dtype)
+
+    def add_coldslice(self, fname, dtype=np.float64):
+        """
+        Add a cold table to the HDF5 file
+        """
+        assert self.shape[1] == 1
+        assert self.shape[2] == 1
+
+        with h5py.File(fname, "a") as dfile:
+            cs_grp = dfile.require_group("cold_slice")
+            self._write_data(cs_grp, dtype)
 
     def write_lorene(self, fname):
         """
