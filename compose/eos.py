@@ -469,6 +469,45 @@ class Table:
         eos.thermo["Q7"] = (e - e_ph)/(self.mn*nb) - 1
 
         return eos
+    
+    def enforce_pressure_temperature_monotonicity(self,logp=True,verb=0):
+        nb = self.nb[:,np.newaxis,np.newaxis]
+        p = self.thermo["Q1"]*nb
+        if logp:
+            p = np.log(p)
+
+        eos_new = self.copy()
+
+        if verb>0: print(np.sum((p[:,:,1:] - p[:,:,:-1])<0.0))
+        if verb>0: print(np.sum((p[1:,:,:] - p[:-1,:,:])<0.0))
+
+        for nb_idx in range(self.shape[0]):
+            if verb>1: print(nb_idx,end="\r")
+            for yq_idx in range(self.shape[1]):
+                t_idx = 0
+                while t_idx < self.shape[2]-1:
+                    start_idx = t_idx
+                    while p[nb_idx,yq_idx,t_idx+1]<=p[nb_idx,yq_idx,start_idx]:
+                        t_idx += 1
+                    end_idx = t_idx + 1
+
+                    if end_idx>start_idx+1:
+                        if verb>2: print()
+                        while np.any((p[nb_idx,yq_idx,start_idx+1:end_idx+1]-p[nb_idx,yq_idx,start_idx:end_idx])<0):
+                            if verb>2: print(nb_idx,yq_idx,start_idx,end_idx,p[nb_idx,yq_idx,start_idx],p[nb_idx,yq_idx,end_idx],np.min(p[nb_idx,yq_idx,start_idx+1:end_idx+1]-p[nb_idx,yq_idx,start_idx:end_idx]),end="\r")
+                            p[nb_idx,yq_idx,start_idx+1:end_idx] = (p[nb_idx,yq_idx,start_idx:end_idx-1] + p[nb_idx,yq_idx,start_idx+1:end_idx] + p[nb_idx,yq_idx,start_idx+2:end_idx+1])/3
+                        if verb>2: print()
+                    t_idx += 1
+
+        if verb>0: print(np.sum((p[:,:,1:] - p[:,:,:-1])<0.0))
+        if verb>0: print(np.sum((p[1:,:,:] - p[:-1,:,:])<0.0))
+
+        if logp:
+            p = np.exp(p)
+
+        eos_new.thermo["Q1"] = p/nb
+
+        return eos_new
 
     def restrict(self, nb_min=None, nb_max=None, yq_min=None, yq_max=None,
             t_min=None, t_max=None):
