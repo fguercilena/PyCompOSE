@@ -23,6 +23,8 @@ import h5py
 from math import pi
 import numpy as np
 import os
+import sys
+import struct
 
 class Metadata:
     """
@@ -394,6 +396,85 @@ class Table:
 
         return eos
 
+    def make_hot_slice(self, f_t, f_ye, nb_min=None, nb_max=None):
+        """
+        Create a new table in which entropy and ye are specified as functions of rho
+
+        Remark the new table will be invalidated
+        """
+        from .utils import interpolator
+        from scipy.optimize import minimize_scalar
+
+        def interp_to_given_yp(var3d, yq_s):
+            out = np.empty_like(yq_s)
+            for inb in range(var3d.shape[0]):
+                for it in range(var3d.shape[2]):
+                    f = interpolator(self.yq, var3d[inb,:,it])
+                    out[inb,0,it] = f(yq_s[inb,0,it])
+            return out
+
+        def interp_to_given_t(var3d, t_s):
+            out = np.empty_like(t_s)
+            for inb in range(var3d.shape[0]):
+                for iy in range(var3d.shape[1]):
+                    f = interpolator(self.t, var3d[inb,iy,:])
+                    out[inb,iy,0] = f(t_s[inb,iy,0])
+            return out
+
+        # Restrict the range if necessary
+        mask = self.nb >= 0
+        if not nb_min == None:
+          mask = self.nb >= nb_min
+        if not nb_max == None:
+          mask = (self.nb <=nb_max) & mask
+
+        # Calculate yq
+        yq_eq = np.zeros((self.nb[mask].shape[0], 1, self.t.shape[0]), dtype=self.dtype)
+        for inb in range(len(self.nb[mask])):
+            yq_eq[inb,0,:] = f_ye(self.nb[mask][inb])
+        # Calculate the 2d entropy table
+        s_2d = interp_to_given_yp(self.thermo['Q2'][mask,:,:], yq_eq)
+        # Estimate temperature from entropy
+        t_eq = np.zeros((self.nb[mask].shape[0], 1, 1), dtype=self.dtype)
+        for inb in range(len(self.nb[mask])):
+            t_eq[inb,0,0] = f_t(self.nb[mask][inb])
+        #for inb in range(len(self.nb[mask])):
+        #    S0 = f_ent(self.nb[mask][inb])
+        #    f = interpolator(self.t, (s_2d[inb,0,:] - S0)**2)
+        #    res = minimize_scalar(f, bounds=(self.t[0], self.t[-1]), method='bounded',
+        #                          options={'xatol':1e-2,'maxiter':100})
+        #    t_eq[inb,0,0] = res.x
+
+        eos = self.copy(copy_data=False)
+        eos.yq = np.zeros(1, dtype=self.dtype)
+        eos.t = np.zeros(1, dtype=self.dtype)
+        eos.nb = self.nb[mask]
+        eos.shape = (eos.nb.shape[0], 1, 1)
+
+        for key in self.thermo.keys():
+            temp = interp_to_given_yp(self.thermo[key][mask,:,:], yq_eq)
+            eos.thermo[key] = interp_to_given_t(temp, t_eq)
+        eos.md.thermo[13] = ("temp", "temperature in MeV")
+        eos.thermo['temp'] = t_eq
+        for key in self.Y.keys():
+            temp = interp_to_given_yp(self.Y[key][mask,:,:], yq_eq)
+            eos.Y[key] = interp_to_given_t(temp, t_eq)
+        # Add the lepton fraction to the table.
+        if not 'e' in eos.Y.keys():
+            eos.md.pairs[1] = ("e", "electron/charge/lepton fraction")
+            eos.Y['e'] = interp_to_given_t(yq_eq, t_eq)
+        for key in self.A.keys():
+            temp = interp_to_given_yp(self.A[key][mask,:,:], yq_eq)
+            eos.A[key] = interp_to_given_t(temp, t_eq)
+        for key in self.Z.keys():
+            temp = interp_to_given_yp(self.Z[key][mask,:,:], yq_eq)
+            eos.Z[key] = interp_to_given_t(temp, t_eq)
+        for key in self.qK.keys():
+            temp = interp_to_given_yp(self.qK[key][mask,:,:], yq_eq)
+            eos.qK[key] = interp_to_given_t(temp, t_eq)
+
+        return eos
+
     def make_beta_eq_table(self):
         """
         Create a new table in which yq is set by beta equilibrium
@@ -426,6 +507,10 @@ class Table:
             eos.thermo[key] = interp_to_given_yp(self.thermo[key], yq_eq)
         for key in self.Y.keys():
             eos.Y[key] = interp_to_given_yp(self.Y[key], yq_eq)
+        # Add the lepton fraction to the table.
+        if not 'e' in eos.Y.keys():
+            eos.md.pairs[1] = ("e", "electron/charge/lepton fraction")
+            eos.Y['e'] = yq_eq
         for key in self.A.keys():
             eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
         for key in self.Z.keys():
@@ -824,6 +909,87 @@ class Table:
         with h5py.File(fname, "a") as dfile:
             cs_grp = dfile.require_group("cold_slice")
             self._write_data(cs_grp, dtype)
+
+    def write_athtab(self, fname, dtype=np.float64, endian='native'):
+        """
+        Writes the table as a .athtab file for use in AthenaK
+        """
+        # Prepare the header
+        endianness = '='
+        endianstring = sys.byteorder
+        if endian == 'big':
+            endianness = '>'
+            endianstring = 'big'
+        elif endian == 'little':
+            endianness = '<'
+            endianstring = 'little'
+        elif endian != 'native':
+            raise RuntimeError(f'Unknown endianness {endianness}')
+        fptype = dtype
+        precision = 'double'
+        fspec = 'd'
+        if dtype == np.float32:
+            precision = 'single'
+            fspec = 'f'
+        # Write header in ASCII
+        with open(fname, "w") as f:
+            # Generate metadata
+            f.write(f"<metadatabegin>\n" \
+                    f"version=1.0\n" \
+                    f"endianness={endianstring}\n" \
+                    f"precision={precision}\n" \
+                    f"<metadataend>\n")
+            # Print scalars
+            f.write(f"<scalarsbegin>\n" \
+                    f"mn={self.mn}\n" \
+                    f"mp={self.mp}\n" \
+                    f"<scalarsend>\n")
+            # Prepare points
+            # Note that because our fields will be indexed as (nb, yq, t), we must
+            # write the points in this same order.
+            f.write(f"<pointsbegin>\n" \
+                    f"nb={len(self.nb)}\n" \
+                    f"yq={len(self.yq)}\n" \
+                    f"t={len(self.t)}\n" \
+                    f"<pointsend>\n")
+            # Prepare fields
+            f.write(f"<fieldsbegin>\n")
+            for name, desc in self.md.thermo.values():
+                f.write(f"{name}\n")
+            for name, desc in self.md.pairs.values():
+                f.write(f"Y[{name}]\n")
+            for name, desc in self.md.quads.values():
+                f.write(f"Y[{name}]\n")
+                f.write(f"A[{name}]\n")
+                f.write(f"Z[{name}]\n")
+            for name, desc in self.md.micro.values():
+                f.write(f"{name}\n")
+            f.write(f"<fieldsend>\n")
+        # Now open the file in binary and write the data
+        nn = len(self.nb)
+        ny = len(self.yq)
+        nt = len(self.t)
+        npts = nn*ny*nt
+        with open(fname, "ab") as f:
+            f.write(struct.pack(f'{endianness}{nn}{fspec}', *self.nb))
+            f.write(struct.pack(f'{endianness}{ny}{fspec}', *self.yq))
+            f.write(struct.pack(f'{endianness}{nt}{fspec}', *self.t))
+            for name, desc in self.md.thermo.values():
+                f.write(struct.pack(f'{endianness}{npts}{fspec}',
+                                    *self.thermo[name].flatten()))
+            for name, desc in self.md.pairs.values():
+                f.write(struct.pack(f'{endianness}{npts}{fspec}',
+                                    *self.Y[name].flatten()))
+            for name, desc in self.md.quads.values():
+                f.write(struct.pack(f'{endianness}{npts}{fspec}',
+                                    *self.Y[name].flatten()))
+                f.write(struct.pack(f'{endianness}{npts}{fspec}',
+                                    *self.A[name].flatten()))
+                f.write(struct.pack(f'{endianness}{npts}{fspec}',
+                                    *self.Z[name].flatten()))
+            for name, desc in self.md.micro.values():
+                f.write(struct.pack(f'{endianness}{npts}{fspec}',
+                                    *self.qK[name].flatten()))
 
     def write_lorene(self, fname):
         """
