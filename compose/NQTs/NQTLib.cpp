@@ -1,6 +1,6 @@
 #include <cmath>
 #include <cassert>
-#include <cstdlib> 
+#include <cstdlib>
 
 using namespace std;
 
@@ -90,7 +90,7 @@ extern "C" _Float64 NQT_log_O2_single(const _Float64 x) {
       const int64_t frac_high = frac_as_int>>26;
       const int64_t frac_low  = frac_as_int & low_mask;
       const int64_t frac_squared = frac_high*frac_high + ((frac_high*frac_low)>>25);
-      
+
       return static_cast<_Float64>(x_as_int +
                                     ((frac_as_int - frac_squared)/3)) * scale_down;
   }

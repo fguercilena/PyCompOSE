@@ -554,7 +554,7 @@ class Table:
         eos.thermo["Q7"] = (e - e_ph)/(self.mn*nb) - 1
 
         return eos
-    
+
     def enforce_pressure_temperature_monotonicity(self,logp=True,verb=0):
         nb = self.nb[:,np.newaxis,np.newaxis]
         p = self.thermo["Q1"]*nb
@@ -754,8 +754,8 @@ class Table:
             self.Y[name] = np.zeros(self.shape, dtype=self.dtype)
         for name, desc in self.md.quads.values():
             self.Y[name] = np.zeros(self.shape, dtype=self.dtype)
-            self.A[name] = np.nan*np.ones(self.shape, dtype=self.dtype)
-            self.Z[name] = np.nan*np.ones(self.shape, dtype=self.dtype)
+            self.A[name] = np.zeros(self.shape, dtype=self.dtype)
+            self.Z[name] = np.zeros(self.shape, dtype=self.dtype)
         with open(os.path.join(self.path, "eos.compo"), "r") as cfile:
             for line in cfile:
                 L = line.split()

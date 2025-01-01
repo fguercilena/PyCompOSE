@@ -2,7 +2,7 @@
 #
 # Instructions
 # - Run the 'SFHo.py' example to obtain 'SFHo.h5'
-# - Run the command 'python setup.py build' in the folder 
+# - Run the command 'python setup.py build' in the folder
 #    ../compose/NQTs to build the NQT library
 # - Run this script to produce 'SFHo_NQT.h5'
 

@@ -2,12 +2,13 @@ import ctypes
 import glob
 import numpy as np
 import os
-script_dir = os.path.dirname(os.path.abspath(__file__))
 
-libfile_glob = glob.glob(script_dir+"/build/*/NQTLib*.so")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+libfile_glob = glob.glob(os.path.join(script_dir, "..", "NQTLib*.so"))
+
 if len(libfile_glob)==0:
     print("Could not find library file NQTLib*.so.")
-    print("Library can be build by running 'python setup.py build' in path/to/PyCompOSE/compose/NQTs/")
+    print("Library can be build by running 'python setup.py build' in path/to/PyCompOSE/compose/")
     assert(len(libfile_glob)>0)
 libfile = libfile_glob[0]
 NQT_lib = ctypes.CDLL(libfile)
@@ -57,19 +58,19 @@ def NQT_log2_O1(x):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_log_LANL_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
         result = NQT_lib.NQT_log_LANL_single(x)
         return result
-        
+
 def NQT_exp2_O1(x):
     if hasattr(x,"__len__"):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_exp_LANL_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
@@ -81,19 +82,19 @@ def NQT_log2_frexp_O1(x):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_log_frexp_O1_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
         result = NQT_lib.NQT_log_frexp_O1_single(x)
         return result
-        
+
 def NQT_exp2_ldexp_O1(x):
     if hasattr(x,"__len__"):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_exp_ldexp_O1_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
@@ -106,19 +107,19 @@ def NQT_log2_frexp_O2(x):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_log_frexp_O2_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
         result = NQT_lib.NQT_log_frexp_O2_single(x)
         return result
-        
+
 def NQT_exp2_ldexp_O2(x):
     if hasattr(x,"__len__"):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_exp_ldexp_O2_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
@@ -130,19 +131,19 @@ def NQT_log2_O2(x):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_log_O2_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
         result = NQT_lib.NQT_log_O2_single(x)
         return result
-        
+
 def NQT_exp2_O2(x):
     if hasattr(x,"__len__"):
         x_array = np.array(x,dtype=np.float64).flatten()
         f_array = np.zeros(x_array.shape,dtype=np.float64)
         NQT_lib.NQT_exp_O2_array(x_array, f_array, x_array.__len__())
-        if hasattr(x,"shape"):            
+        if hasattr(x,"shape"):
             f_array = f_array.reshape(x.shape)
         return f_array
     else:
@@ -156,22 +157,22 @@ if __name__ == "__main__":
     mpl.rcParams['mathtext.fontset'] = 'stix'
     mpl.rcParams['font.family'] = 'STIXGeneral'
     plt.close("all")
-    
+
     # samples = 1000001
     # xs = 10.0**np.linspace(-3,3,num=samples)
-    
+
     # start = datetime.datetime.now()
     # NQT_log_xs_C0 = NQT_log2(xs)
     # NQT_xs_C0 = NQT_exp2(NQT_log_xs_C0)
     # end = datetime.datetime.now()
-    
+
     # time_taken_seconds = (end - start).total_seconds()
     # samples_per_second = samples / time_taken_seconds
     # print("Samples per second: {:.6e}".format(samples_per_second))
-    
+
     # plot_samples = 10001
     # subsample_fac = max(samples//plot_samples,1)
-        
+
     # fig, ax = plt.subplots(2,1)
     # ax[0].plot(xs[::subsample_fac], np.log2(xs[::subsample_fac]),c="k")
     # ax[0].plot(xs[::subsample_fac], NQT_log_xs_C0[::subsample_fac],c="C0")
@@ -181,7 +182,7 @@ if __name__ == "__main__":
     # ax[1].set_xscale("log")
     # ax[1].set_xlabel(r"$x$")
     # ax[1].set_ylabel(r"$\mathrm{log}_\mathrm{NQT}(x) - \mathrm{log}_{2}(x)$")
-    
+
     # fig, ax = plt.subplots(2,1)
     # ax[0].plot(xs[::subsample_fac], xs[::subsample_fac])
     # ax[0].plot(xs[::subsample_fac], NQT_xs_C0[::subsample_fac])
@@ -192,7 +193,7 @@ if __name__ == "__main__":
     # ax[1].set_xscale("log")
     # ax[1].set_xlabel(r"$x$")
     # ax[1].set_ylabel(r"$\Delta x / x$")
-    
+
     # fig.savefig("NQT_test.pdf")
     # fig.savefig("NQT_test.png",dpi=480)
 
@@ -223,7 +224,7 @@ if __name__ == "__main__":
 
 
     import scipy.interpolate as interp
-    
+
     samples = 10000
     powers=2
     x0 = 2.0**(-powers)
@@ -249,7 +250,7 @@ if __name__ == "__main__":
     ax0[1].set_xlabel(r"$x$")
 
     fig0.savefig("test_log_NQT.pdf")
-    
+
     fig0, ax0 = plt.subplots(2,1,figsize=(6,4),sharex=True)
     ax0[0].plot(2**xs_log2, xs_log2,   lw=0.5, ls="-",  c="k",  label=r"$\mathcal{O}(\infty)$")
     ax0[0].plot(2**xs_log2, xs_NQT_O1, lw=0.5, ls=":",  c="C0", label=r"$\mathcal{O}(1)$")
