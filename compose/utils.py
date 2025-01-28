@@ -184,28 +184,47 @@ def convert_to_NQTs(fname_in, fname_out, NQT_order=2, use_bithacks=True):
         log_data[key] = False
     log_data["cs2"] = True
 
+    # Get the shape of the data from Q1
+    input_shape = table_h5_in["Q1"].shape
+
+    # Determine the dimensionality of the table
+    dims = np.sum(input_shape != 1)
+
+    # Only support for 1D and 3D tables is present
+    assert dims==1 or dims==3, "convert_to_NQTs() only supports 1- and 3-dimensional tables."
+
+    # Only support for 1D tables in rho is present
+    if dims==1:
+        assert input_shape[0]>1, "convert_to_NQTs() only supports 1-dimensional tables in rho."
+
     # Set up grid for interpolation
     nb_min = table_h5_in["nb"][0]*(1+1e-15)
     nb_max = table_h5_in["nb"][-1]*(1-1e-15)
-
-    t_min = table_h5_in["t"][0]*(1+1e-15)
-    t_max = table_h5_in["t"][-1]*(1-1e-15)
-
     nb_new = NQT_exp(np.linspace(NQT_log(nb_min), NQT_log(nb_max), num=table_h5_in["nb"].shape[0]))
-    t_new  = NQT_exp(np.linspace(NQT_log(t_min),  NQT_log(t_max),  num=table_h5_in["t"].shape[0]))
+
+    if dims==3:
+        t_min = table_h5_in["t"][0]*(1+1e-15)
+        t_max = table_h5_in["t"][-1]*(1-1e-15)
+        t_new  = NQT_exp(np.linspace(NQT_log(t_min),  NQT_log(t_max),  num=table_h5_in["t"].shape[0]))
+    elif dims==1:
+        t_new = table_h5_in["t"]
 
     table_h5_out.create_dataset("nb",data=nb_new)
     table_h5_out.create_dataset("t",data=t_new)
 
     log_nb_old = np.log(table_h5_in["nb"])
-    log_t_old = np.log(table_h5_in["t"])
-
     log_nb_new = np.log(nb_new)
+
+    log_t_old = np.log(table_h5_in["t"])
     log_t_new = np.log(t_new)
 
-    interp_x_old = (log_nb_old,log_t_old)
-    MG_log_nb_new, MG_log_t_new = np.meshgrid(log_nb_new,log_t_new,indexing="ij")
-    interp_X_new = np.array([MG_log_nb_new.flatten(),MG_log_t_new.flatten()]).T
+    if dims == 3:
+        interp_x_old = (log_nb_old,log_t_old)
+        MG_log_nb_new, MG_log_t_new = np.meshgrid(log_nb_new,log_t_new,indexing="ij")
+        interp_X_new = np.array([MG_log_nb_new.flatten(),MG_log_t_new.flatten()]).T
+    elif dims == 1:
+        interp_x_old = (log_nb_old,)
+        interp_X_new = log_nb_new
 
     # Interpolate to new grid
     for key in dsets_to_interp:
@@ -216,7 +235,7 @@ def convert_to_NQTs(fname_in, fname_out, NQT_order=2, use_bithacks=True):
             data_current = data_old[:,yq_idx,:]
             if log_data[key]:
                 data_current = np.log(data_current)
-            interp_current = RegularGridInterpolator(interp_x_old, data_current,method="linear")
+            interp_current = RegularGridInterpolator(interp_x_old, data_current, method="linear")
             data_result = interp_current(interp_X_new).reshape((data_new.shape[0],data_new.shape[2]))
             if log_data[key]:
                 data_result = np.exp(data_result)
