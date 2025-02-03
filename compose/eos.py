@@ -22,6 +22,7 @@ from copy import deepcopy
 import h5py
 from math import pi
 import numpy as np
+import scipy.integrate as sint
 import os
 import sys
 import struct
@@ -94,12 +95,16 @@ class Table:
     That is, the temperature is the fastest running index.
     """
 
+    """ multiply to convert MeV --> g """
+    unit_mass = 1.7826619216277864e-27
     """ multiply to convert MeV --> K """
     unit_temp  = 1.0/8.617333262e-11
     """ multiply to convert MeV/fm^3 --> g/cm^3 """
     unit_dens  = 1.782662696e12
     """ multiply to convert MeV/fm^3 --> erg/cm^3 """
     unit_energy = 1.6021773299709372e33
+    """ multiply to convert unitless specific internal energy --> erg/g"""
+    unit_eps = 8.987551787368177e20
     """ multiply to convert MeV/fm^3 --> dyn/cm^2 """
     unit_press = 1.602176634e33
 
@@ -1005,6 +1010,29 @@ class Table:
                 e  = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
                 f.write("%d %.15e %.15e %.15e\n" % (i, nb, e, p))
+
+    def write_rns(self, fname):
+        """
+        Export the table in RNS format. This is only possible for 1D tables.
+        """
+        assert self.shape[1] == 1
+        assert self.shape[2] == 1
+
+        sed = self.thermo["Q7"][:,0,0]
+        p = self.thermo["Q1"][:,0,0]*self.nb
+        ed = (1 + sed) * self.mn * self.nb
+        h = sint.cumulative_trapezoid(1.0/(ed + p), p)
+        nd_CGS = self.nb * Table.unit_dens/Table.unit_mass
+        tmd_CGS = Table.unit_dens*ed
+        p_CGS = Table.unit_press*p
+        h_CGS = h * Table.unit_eps
+        h_CGS[0] = 1 # Exact value = 0, but RNS seems to require that.
+        p_CGS[0] = 1
+
+        with open(fname, 'w') as f:
+            f.write(f"{len(tmd_CGS):d} \n")
+            for ed,p,h,n in zip(tmd_CGS, p_CGS, h_CGS, nd_CGS):
+                f.write(f"{ed:.15e}  {p:.15e}  {h:.15e}  {n:.15e} \n")
 
     def write_txt(self, fname):
         """
