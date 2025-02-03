@@ -131,6 +131,7 @@ class Table:
         self.thermo = {}
         self.Y, self.A, self.Z = {}, {}, {}
         self.qK = {}
+        self.lorene_cut = 0
 
     def copy(self, copy_data=True):
         """
@@ -552,6 +553,18 @@ class Table:
             eos.qK[key] = interp_to_given_yp(self.qK[key], yq_eq)
 
         return eos
+
+    def find_lorene_rho_cut(self, threshold=0.5) -> int:
+        """
+        Find the density cut for the Lorene txt file
+        Returns first index where rho/P * dPdrho > threshold
+        """
+        assert self.shape[1] == self.shape[2] == 1
+        n = self.nb
+        P = self.thermo["Q1"][:, 0, 0] * n
+        dPdn = np.gradient(P, n)
+        self.lorene_cut = (n/P*dPdn).searchsorted(.5)
+        return self.lorene_cut
 
     def remove_photons(self):
         """
@@ -1009,6 +1022,7 @@ class Table:
         with h5py.File(fname, "a") as dfile:
             cs_grp = dfile.require_group("cold_slice")
             self._write_data(cs_grp, dtype)
+            cs_grp["lorene_cut"] = self.lorene_cut
 
     def write_athtab(self, fname, dtype=np.float64, endian='native'):
         """
@@ -1099,12 +1113,12 @@ class Table:
         assert self.shape[2] == 1
 
         with open(fname, "w") as f:
-            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % len(self.nb))
-            for i in range(len(self.nb)):
+            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % (len(self.nb) - self.lorene_cut))
+            for ind, i in enumerate(range(self.lorene_cut, len(self.nb))):
                 nb = self.nb[i]
                 e  = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
-                f.write("%d %.15e %.15e %.15e\n" % (i, nb, e, p))
+                f.write("%d %.15e %.15e %.15e\n" % (ind, nb, e, p))
 
     def write_rns(self, fname):
         """
