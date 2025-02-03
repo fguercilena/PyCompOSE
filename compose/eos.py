@@ -832,6 +832,73 @@ class Table:
                     if K in self.md.micro:
                         self.qK[self.md.micro[K][0]][inb, iyq, it] = q
 
+    def read_from_pizza(
+        self,
+        hydro_path,
+        weak_path,
+        m_for_mub=None,
+    ):
+        """
+        This function reads the EOS from the pizza hydro and weak files and
+        initializes a pycompose Table object. Pizza tables use a "custom" mass
+        factor while CompOSE uses the neutron mass as default. The specific
+        internal energy and the chemical potentials are rescaled such that they
+        are compatible to the neutron mass.
+        Empirically, it seems that the baryon mass was not rescaled in the pizza
+        tables. To correct this, use m_for_mb=931.4941 (atomic mass unit).
+        """
+        with h5py.File(hydro_path, 'r') as hf:
+            hydro = {key: np.array(hf[key][:]) for key in hf}
+        with h5py.File(weak_path, 'r') as hf:
+            weak = {key: np.array(hf[key][:]) for key in hf}
+
+        for key, ar in {**hydro, **weak}.items():
+            if not len(ar.shape) == 3:
+                continue
+            hydro[key] = np.transpose(ar, (2, 0, 1))
+        del weak
+
+        mb = hydro['mass_factor']
+
+        if m_for_mub is None:
+            m_for_mub = mb
+
+        self.mn = 939.56535
+        self.mp = 938.27209
+        self.nb = hydro['density'] / Table.unit_dens/mb
+        self.t = hydro['temperature']
+        self.yq = hydro['ye']
+
+        self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
+        self.valid = np.ones(self.shape, dtype=bool)
+        self.lepton = True
+
+        self.thermo["Q1"] = hydro['pressure'] / Table.unit_press / self.nb[:, None, None]
+        self.thermo["Q2"] = hydro['entropy']
+        mu_e = hydro["mu_e"]
+        mu_p = hydro["mu_p"]
+        mu_n = hydro["mu_n"]
+        eps = hydro['internalEnergy'] / Table.unit_eps
+        # transform to new mass factor
+        eps = (1+eps)*mb/self.mn - 1
+        self.thermo["Q7"] = eps
+        temp_entr = self.t[None,  None, :]*self.thermo["Q2"]
+        self.thermo["Q6"] = eps - temp_entr/self.mn
+
+        self.thermo["Q3"] = (mu_n  + m_for_mub)/self.mn - 1
+        self.thermo["Q4"] = (mu_p - mu_n)/self.mn
+        self.thermo["Q5"] = (mu_e + mu_p - mu_n)/self.mn
+
+        self.Y["e"] = np.meshgrid(self.nb, self.yq, self.t, indexing='ij')[1]
+        self.Y["n"] = hydro['Xn']
+        self.Y["p"] = hydro['Xp']
+        self.Y["He4"] = hydro['Xa']/4
+        # "Abar" in Pizza seems to refer to the A of the representative nucleus
+        self.Y["N"] = hydro["Xh"]/hydro["Abar"]
+
+        self.A["N"] = hydro["Abar"]
+        self.Z["N"] = hydro["Zbar"]
+
     def shrink_to_valid_nb(self):
         """
         Restrict the range of nb
