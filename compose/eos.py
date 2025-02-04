@@ -27,6 +27,11 @@ import os
 import sys
 import struct
 
+try:
+    from ._version import version
+except ImportError:
+    version = "unknown"
+
 class Metadata:
     """
     Class encoding the metadata/indexing used to read the EOS table
@@ -132,6 +137,9 @@ class Table:
         self.Y, self.A, self.Z = {}, {}, {}
         self.qK = {}
         self.lorene_cut = 0
+
+        self.version = version
+        self.git_hash = version.split("+g")[-1]
 
     def copy(self, copy_data=True):
         """
@@ -958,6 +966,8 @@ class Table:
             self.valid = self.valid & (self.thermo["cs2"] < 1)
 
     def _write_data(self, dfile, dtype):
+        dfile.attrs['version'] = self.version
+        dfile.attrs['git_hash'] = self.git_hash
         dfile.create_dataset("nb", dtype=dtype, data=self.nb,
             compression="gzip", compression_opts=9)
         dfile.create_dataset("t", dtype=dtype, data=self.t,
