@@ -22,9 +22,15 @@ from copy import deepcopy
 import h5py
 from math import pi
 import numpy as np
+import scipy.integrate as sint
 import os
 import sys
 import struct
+
+try:
+    from ._version import version
+except ImportError:
+    version = "unknown"
 
 class Metadata:
     """
@@ -94,12 +100,16 @@ class Table:
     That is, the temperature is the fastest running index.
     """
 
+    """ multiply to convert MeV --> g """
+    unit_mass = 1.7826619216277864e-27
     """ multiply to convert MeV --> K """
     unit_temp  = 1.0/8.617333262e-11
     """ multiply to convert MeV/fm^3 --> g/cm^3 """
     unit_dens  = 1.782662696e12
     """ multiply to convert MeV/fm^3 --> erg/cm^3 """
     unit_energy = 1.6021773299709372e33
+    """ multiply to convert unitless specific internal energy --> erg/g"""
+    unit_eps = 8.987551787368177e20
     """ multiply to convert MeV/fm^3 --> dyn/cm^2 """
     unit_press = 1.602176634e33
 
@@ -126,6 +136,10 @@ class Table:
         self.thermo = {}
         self.Y, self.A, self.Z = {}, {}, {}
         self.qK = {}
+        self.lorene_cut = 0
+
+        self.version = version
+        self.git_hash = version.split("+g")[-1]
 
     def copy(self, copy_data=True):
         """
@@ -180,6 +194,26 @@ class Table:
         if floor is not None:
             self.thermo["cs2"] = np.maximum(self.thermo["cs2"], floor)
         self.md.thermo[12] = ("cs2", "sound speed squared [c^2]")
+
+    def compute_abar(self):
+        """
+        Computes the average mass number
+        """
+        self.md.micro[10] = ("Abar", "average mass number")
+        self.qK["Abar"] = sum(
+            self.Y[nuc] for nuc in self.Y if nuc not in ["e", "mu", "tau"]
+        )
+        mask = self.qK["Abar"] <= 0
+        if np.any(mask):
+            print(f"sum(Y) <= 0 for {mask.sum()} points")
+
+        self.qK["Abar"][mask] = 1
+
+        self.qK["Abar"] = 1.0 / self.qK["Abar"]
+        assert np.all(
+            phys := (self.qK["Abar"] >= 0.9999)
+        ), f"Unphysical Abar in {np.sum(~phys)} points"
+        self.qK["Abar"] = np.clip(self.qK["Abar"], 1.0, None)
 
     def diff_wrt_nb(self, Q):
         """
@@ -512,13 +546,33 @@ class Table:
             eos.md.pairs[1] = ("e", "electron/charge/lepton fraction")
             eos.Y['e'] = yq_eq
         for key in self.A.keys():
-            eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+            try:
+                eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+            except ValueError:
+                print("Could not interpolate A[{}]".format(key))
+                eos.A[key] = np.ones_like(yq_eq)
         for key in self.Z.keys():
-            eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+            try:
+                eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+            except ValueError:
+                print("Could not interpolate Z[{}]".format(key))
+                eos.Z[key] = np.ones_like(yq_eq)
         for key in self.qK.keys():
             eos.qK[key] = interp_to_given_yp(self.qK[key], yq_eq)
 
         return eos
+
+    def find_lorene_rho_cut(self, threshold=0.5) -> int:
+        """
+        Find the density cut for the Lorene txt file
+        Returns first index where rho/P * dPdrho > threshold
+        """
+        assert self.shape[1] == self.shape[2] == 1
+        n = self.nb
+        P = self.thermo["Q1"][:, 0, 0] * n
+        dPdn = np.gradient(P, n)
+        self.lorene_cut = (n/P*dPdn).searchsorted(.5)
+        return self.lorene_cut
 
     def remove_photons(self):
         """
@@ -799,6 +853,73 @@ class Table:
                     if K in self.md.micro:
                         self.qK[self.md.micro[K][0]][inb, iyq, it] = q
 
+    def read_from_pizza(
+        self,
+        hydro_path,
+        weak_path,
+        m_for_mub=None,
+    ):
+        """
+        This function reads the EOS from the pizza hydro and weak files and
+        initializes a pycompose Table object. Pizza tables use a "custom" mass
+        factor while CompOSE uses the neutron mass as default. The specific
+        internal energy and the chemical potentials are rescaled such that they
+        are compatible to the neutron mass.
+        Empirically, it seems that the baryon mass was not rescaled in the pizza
+        tables. To correct this, use m_for_mb=931.4941 (atomic mass unit).
+        """
+        with h5py.File(hydro_path, 'r') as hf:
+            hydro = {key: np.array(hf[key][:]) for key in hf}
+        with h5py.File(weak_path, 'r') as hf:
+            weak = {key: np.array(hf[key][:]) for key in hf}
+
+        for key, ar in {**hydro, **weak}.items():
+            if not len(ar.shape) == 3:
+                continue
+            hydro[key] = np.transpose(ar, (2, 0, 1))
+        del weak
+
+        mb = hydro['mass_factor']
+
+        if m_for_mub is None:
+            m_for_mub = mb
+
+        self.mn = 939.56535
+        self.mp = 938.27209
+        self.nb = hydro['density'] / Table.unit_dens/mb
+        self.t = hydro['temperature']
+        self.yq = hydro['ye']
+
+        self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
+        self.valid = np.ones(self.shape, dtype=bool)
+        self.lepton = True
+
+        self.thermo["Q1"] = hydro['pressure'] / Table.unit_press / self.nb[:, None, None]
+        self.thermo["Q2"] = hydro['entropy']
+        mu_e = hydro["mu_e"]
+        mu_p = hydro["mu_p"]
+        mu_n = hydro["mu_n"]
+        eps = hydro['internalEnergy'] / Table.unit_eps
+        # transform to new mass factor
+        eps = (1+eps)*mb/self.mn - 1
+        self.thermo["Q7"] = eps
+        temp_entr = self.t[None,  None, :]*self.thermo["Q2"]
+        self.thermo["Q6"] = eps - temp_entr/self.mn
+
+        self.thermo["Q3"] = (mu_n  + m_for_mub)/self.mn - 1
+        self.thermo["Q4"] = (mu_p - mu_n)/self.mn
+        self.thermo["Q5"] = (mu_e + mu_p - mu_n)/self.mn
+
+        self.Y["e"] = np.meshgrid(self.nb, self.yq, self.t, indexing='ij')[1]
+        self.Y["n"] = hydro['Xn']
+        self.Y["p"] = hydro['Xp']
+        self.Y["He4"] = hydro['Xa']/4
+        # "Abar" in Pizza seems to refer to the A of the representative nucleus
+        self.Y["N"] = hydro["Xh"]/hydro["Abar"]
+
+        self.A["N"] = hydro["Abar"]
+        self.Z["N"] = hydro["Zbar"]
+
     def shrink_to_valid_nb(self):
         """
         Restrict the range of nb
@@ -845,6 +966,8 @@ class Table:
             self.valid = self.valid & (self.thermo["cs2"] < 1)
 
     def _write_data(self, dfile, dtype):
+        dfile.attrs['version'] = self.version
+        dfile.attrs['git_hash'] = self.git_hash
         dfile.create_dataset("nb", dtype=dtype, data=self.nb,
             compression="gzip", compression_opts=9)
         dfile.create_dataset("t", dtype=dtype, data=self.t,
@@ -909,6 +1032,7 @@ class Table:
         with h5py.File(fname, "a") as dfile:
             cs_grp = dfile.require_group("cold_slice")
             self._write_data(cs_grp, dtype)
+            cs_grp["lorene_cut"] = self.lorene_cut
 
     def write_athtab(self, fname, dtype=np.float64, endian='native'):
         """
@@ -999,12 +1123,35 @@ class Table:
         assert self.shape[2] == 1
 
         with open(fname, "w") as f:
-            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % len(self.nb))
-            for i in range(len(self.nb)):
+            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % (len(self.nb) - self.lorene_cut))
+            for ind, i in enumerate(range(self.lorene_cut, len(self.nb))):
                 nb = self.nb[i]
                 e  = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
-                f.write("%d %.15e %.15e %.15e\n" % (i, nb, e, p))
+                f.write("%d %.15e %.15e %.15e\n" % (ind, nb, e, p))
+
+    def write_rns(self, fname):
+        """
+        Export the table in RNS format. This is only possible for 1D tables.
+        """
+        assert self.shape[1] == 1
+        assert self.shape[2] == 1
+
+        sed = self.thermo["Q7"][:,0,0]
+        p = self.thermo["Q1"][:,0,0]*self.nb
+        ed = (1 + sed) * self.mn * self.nb
+        h = sint.cumulative_trapezoid(1.0/(ed + p), p)
+        nd_CGS = self.nb * Table.unit_dens/Table.unit_mass
+        tmd_CGS = Table.unit_dens*ed
+        p_CGS = Table.unit_press*p
+        h_CGS = h * Table.unit_eps
+        h_CGS[0] = 1 # Exact value = 0, but RNS seems to require that.
+        p_CGS[0] = 1
+
+        with open(fname, 'w') as f:
+            f.write(f"{len(tmd_CGS):d} \n")
+            for ed,p,h,n in zip(tmd_CGS, p_CGS, h_CGS, nd_CGS):
+                f.write(f"{ed:.15e}  {p:.15e}  {h:.15e}  {n:.15e} \n")
 
     def write_txt(self, fname):
         """
