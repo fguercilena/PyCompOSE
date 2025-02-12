@@ -1128,7 +1128,7 @@ class Table:
                 nb = self.nb[i]
                 e  = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
-                f.write("%d %.15e %.15e %.15e\n" % (ind, nb, e, p))
+                f.write("%d %.15e %.15e %.15e\n" % (ind+1, nb, e, p))
 
     def write_rns(self, fname):
         """
