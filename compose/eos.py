@@ -180,12 +180,17 @@ class Table:
         u = self.mn*(self.thermo["Q7"] + 1)
         h = u + self.thermo["Q1"]
 
+        if (S.min()<=0.0):
+            S_ = S + 2*max(sys.float_info.min, abs(S.min()))
+        else:
+            S_ = S
+
         dPdn = P*self.diff_wrt_nb(np.log(P))
 
         if self.t.shape[0] > 1:
             dPdt = P*self.diff_wrt_t(np.log(P))
-            dSdn = S*self.diff_wrt_nb(np.log(S))
-            dSdt = S*self.diff_wrt_t(np.log(S))
+            dSdn = S_*self.diff_wrt_nb(np.log(S_))
+            dSdt = S_*self.diff_wrt_t(np.log(S_))
 
             self.thermo["cs2"] = (dPdn - dSdn/dSdt*dPdt)/h
         else:
