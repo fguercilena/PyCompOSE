@@ -981,6 +981,53 @@ class Table:
         if check_cs2_max:
             self.valid = self.valid & (self.thermo["cs2"] < 1)
 
+    @staticmethod
+    def _extend_copy(arr, n_nb, n_t):
+        sn, sy, st = arr.shape
+        new_shape = (sn+n_nb, sy, st+n_t)
+        new = np.zeros(new_shape, dtype=arr.dtype)
+        new[:sn, :sy, :st] = arr
+        new[sn:, :sy, :st] = arr[-1][None, :]
+        new[:sn, :sy, st:] = arr[:, :, -1][:, :, None]
+        new[sn:, :sy, st:] = arr[-1, :, -1][None, :, None]
+        return new
+
+    def extend_table(self, n_nb, n_t):
+        dln = np.log10(self.nb[-1]) - np.log10(self.nb[-2])
+        dlt = np.log10(self.t[-1]) - np.log10(self.t[-2])
+        sn, sy, st = self.shape
+        new_shape = (sn+n_nb, sy, st+n_t)
+
+        self.shape = new_shape
+        self.nb = np.concatenate((self.nb, self.nb[-1]*10**(np.arange(1, n_nb+1)*dln)))
+        self.t = np.concatenate((self.t, self.t[-1]*10**(np.arange(1, n_t+1)*dlt)))
+        for grp in (self.thermo, self.Y, self.A, self.Z, self.qK):
+            for key, data in grp.items():
+                grp[key] = self._extend_copy(data, n_nb, n_t)
+        self.valid = self._extend_copy(self.valid, n_nb, n_t)
+
+        # calculate new pressure and epsilon
+        p = self.thermo['Q1']*self.nb[:, None, None]
+        eps = self.thermo['Q7']
+        rho = self.nb[:, None, None]*self.mn
+        p_th = (p - p[..., 0, None])
+        eps_th = (eps - eps[..., 0, None])
+        eps_th[..., 0] = eps_th[..., 1]
+
+        deps = np.zeros(new_shape)
+        deps[sn:] = p[sn-1, :, 0, None]*(1/rho[sn-1] - 1/rho[sn:])
+
+        th_eps = np.zeros(new_shape)
+        th_eps[..., st:] = (self.t[st:] - self.t[st-1])/self.mn
+
+        gthm1 = p_th/(eps_th*rho)
+        gthm1[sn:, :, :st] = gthm1[sn-1, :, :st]
+        gthm1[:, :, st:] = gthm1[..., st-1, None]
+        th_p = gthm1 * th_eps * rho
+
+        self.thermo["Q1"] += th_p/self.nb[:, None, None]
+        self.thermo["Q7"] += th_eps + deps
+
     def _write_data(self, dfile, dtype):
         dfile.attrs['version'] = self.version
         dfile.attrs['git_hash'] = self.git_hash
