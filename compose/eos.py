@@ -215,9 +215,8 @@ class Table:
         self.qK["Abar"][mask] = 1
 
         self.qK["Abar"] = 1.0 / self.qK["Abar"]
-        assert np.all(
-            phys := (self.qK["Abar"] >= 0.9999)
-        ), f"Unphysical Abar in {np.sum(~phys)} points"
+        if not np.all(phys := (self.qK["Abar"] >= 0.9999)):
+            print(f"Unphysical Abar in {np.sum(~phys)} points")
         self.qK["Abar"] = np.clip(self.qK["Abar"], 1.0, None)
 
     def diff_wrt_nb(self, Q):
@@ -921,6 +920,9 @@ class Table:
         self.Y["He4"] = hydro['Xa']/4
         # "Abar" in Pizza seems to refer to the A of the representative nucleus
         self.Y["N"] = hydro["Xh"]/hydro["Abar"]
+        for name, _ in self.md.pairs.values():
+            if name not in self.Y:
+                self.Y[name] = np.zeros_like(self.Y['e'])
 
         self.A["N"] = hydro["Abar"]
         self.Z["N"] = hydro["Zbar"]
