@@ -939,6 +939,15 @@ class Table:
         valid_nb = np.all(self.valid, axis=(1,2))
         in0, in1 = find_valid_region(valid_nb)
 
+        excl_str = []
+        if in0 != 0:
+            excl_str.append(f"0 - {in0}")
+        if in1 != self.shape[0]:
+            excl_str.append(f"{in1} - {self.shape[0]}")
+        if len(excl_str) > 0:
+            excl_str = " and i_n=".join(excl_str)
+            print(f"removing i_n={excl_str} to nb-range {self.nb[in0]}-{self.nb[in1]}!")
+
         self.restrict_idx(in0=in0, in1=in1)
 
     def slice_at_t_idx(self, it):
