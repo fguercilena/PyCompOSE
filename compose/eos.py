@@ -993,6 +993,29 @@ class Table:
         return new
 
     def extend_table(self, n_nb, n_t):
+        '''
+        This adapts the logic in
+        https://bitbucket.org/FreeTHC/thcextra/src/master/EOS_Thermal_Extable
+        to extend the table to higher T and nb by n_nb and n_t points, respectively.
+        Namely, all fields except pressure and internal energy are simply copied
+        from the last point in the table.
+        The internal energy and pressure are calculated via:
+
+        eps = eps(rho_cap, T_cap, Y_e) + eps_th(T) + delta_eps(rho, Y_e)
+        P = P(rho_cap, T_cap, Y_e) + Gamma_th (rho_cap, Y) rho eps_th
+
+        with
+
+        rho_cap = min(rho, rho_max)
+        T_cap = min(T, T_max)
+        eps_th = max((T - T_max)/m_B, 0)
+        delta_eps = P(rho_max, T_min, Y_e) (1/rho_max - 1/rho)
+        Gamma_th = (P(rho, T_max, Y_e) - P(rho, T_min, Y_e))/(rho(eps(rho, T_max, Y_e) - eps(rho, T_min, Y_e)))
+
+        Note that the Gamma_th addition to the pressure is not in Extable but is
+        probably necessary in athena because the temperature needs to be recoverable
+        via root finding of the pressure so it has to always depend monotonically on T.
+        '''
         dln = np.log10(self.nb[-1]) - np.log10(self.nb[-2])
         dlt = np.log10(self.t[-1]) - np.log10(self.t[-2])
         sn, sy, st = self.shape
@@ -1010,19 +1033,18 @@ class Table:
         p = self.thermo['Q1']*self.nb[:, None, None]
         eps = self.thermo['Q7']
         rho = self.nb[:, None, None]*self.mn
+
         p_th = (p - p[..., 0, None])
         eps_th = (eps - eps[..., 0, None])
-        eps_th[..., 0] = eps_th[..., 1]
-
-        deps = np.zeros(new_shape)
-        deps[sn:] = p[sn-1, :, 0, None]*(1/rho[sn-1] - 1/rho[sn:])
-
-        th_eps = np.zeros(new_shape)
-        th_eps[..., st:] = (self.t[st:] - self.t[st-1])/self.mn
-
+        eps_th[..., 0] = eps_th[..., 1] # prevent div by 0
         gthm1 = p_th/(eps_th*rho)
         gthm1[sn:, :, :st] = gthm1[sn-1, :, :st]
         gthm1[:, :, st:] = gthm1[..., st-1, None]
+
+        deps = np.zeros(new_shape)
+        deps[sn:] = p[sn-1, :, 0, None]*(1/rho[sn-1] - 1/rho[sn:])
+        th_eps = np.zeros(new_shape)
+        th_eps[..., st:] = (self.t[st:] - self.t[st-1])/self.mn
         th_p = gthm1 * th_eps * rho
 
         self.thermo["Q1"] += th_p/self.nb[:, None, None]
