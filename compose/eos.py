@@ -20,7 +20,7 @@ Utilities to read general purpose (3D) EOS tables
 
 from copy import deepcopy
 import h5py
-from math import pi
+from math import pi, floor
 import numpy as np
 import scipy.integrate as sint
 import os
