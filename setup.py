@@ -6,8 +6,8 @@ setup(
     use_scm_version={"write_to": "compose/_version.py"},
     description="Read and manipulate equation of state tables in CompOSE ASCII format",
     url="https://github.com/computationalrelativity/PyCompOSE",
-    package_dir={"compose": "compose", "compose.NQTLib": "compose/NQTs"},
-    packages=["compose", "compose.NQTLib"],
+    package_dir={"compose": "compose", "compose.NQTs": "compose/NQTs"},
+    packages=["compose", "compose.NQTs"],
     ext_modules=[
         Extension(
             "compose.NQTLib",
