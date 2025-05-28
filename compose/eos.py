@@ -396,11 +396,74 @@ class Table:
 
         return eos
 
+    def make_entropy_slice(self, f_ent, nb_min=None, nb_max=None):
+        '''
+        Create a new table in which entropy is specified as a function of density
+
+        Remark: the new table will be invalidated
+        '''
+        from .utils import interpolator
+        from scipy.optimize import minimize_scalar
+
+        def interp_to_given_t(var3d, t_s):
+            out = np.empty_like(t_s)
+            for inb in range(var3d.shape[0]):
+                for iy in range(var3d.shape[1]):
+                    f = interpolator(self.t, var3d[inb,iy,:])
+                    out[inb,iy,0] = f(t_s[inb,iy,0])
+            return out
+        
+        # Restrict the range if necessary
+        mask = self.nb >= 0
+        if not nb_min == None:
+            mask = self.nb >= nb_min
+        if not nb_max == None:
+            mask = (self.nb <= nb_max) & mask
+
+        # Calculate yq
+        # Calculate the 2d entropy table
+        s_3d = self.thermo['Q2'][mask,:,:]
+        # Estimate temperature from entropy
+        t_eq = np.zeros((self.nb[mask].shape[0], self.yq.shape[0], 1),
+                        dtype=self.dtype)
+        for inb in range(len(self.nb[mask])):
+            S0 = f_ent(self.nb[mask][inb])
+            for iyq in range(len(self.yq)):
+                f = interpolator(self.t, (s_3d[inb,iyq,:] - S0)**2)
+                res = minimize_scalar(f, bounds=(self.t[0], self.t[-1]), method='bounded',
+                                      options={'xatol':1e-2,'maxiter':100})
+                t_eq[inb,iyq,0] = res.x
+
+        eos = self.copy(copy_data=False)
+        eos.t = np.zeros(1, dtype=self.dtype)
+        eos.nb = self.nb[mask]
+        eos.shape = (eos.nb.shape[0], 1, 1)
+
+        for key in self.thermo.keys():
+            temp = self.thermo[key][mask,:,:]
+            eos.thermo[key] = interp_to_given_t(temp, t_eq)
+        eos.md.thermo[13] = ("temp", "temperature in MeV")
+        eos.thermo['temp'] = t_eq
+        for key in self.Y.keys():
+            temp = self.Y[key][mask,:,:]
+            eos.Y[key] = interp_to_given_t(temp, t_eq)
+        for key in self.A.keys():
+            temp = self.A[key][mask,:,:]
+            eos.A[key] = interp_to_given_t(temp, t_eq)
+        for key in self.Z.keys():
+            temp = self.Z[key][mask,:,:]
+            eos.Z[key] = interp_to_given_t(temp, t_eq)
+        for key in self.qK.keys():
+            temp = self.qK[key][mask,:,:]
+            eos.qK[key] = interp_to_given_t(temp, t_eq)
+
+        return eos
+
     def make_hot_slice(self, f_t, f_ye, nb_min=None, nb_max=None):
         """
-        Create a new table in which entropy and ye are specified as functions of rho
+        Create a new table in which temperature and ye are specified as functions of rho
 
-        Remark the new table will be invalidated
+        Remark: the new table will be invalidated
         """
         from .utils import interpolator
         from scipy.optimize import minimize_scalar
@@ -424,9 +487,9 @@ class Table:
         # Restrict the range if necessary
         mask = self.nb >= 0
         if not nb_min == None:
-          mask = self.nb >= nb_min
+            mask = self.nb >= nb_min
         if not nb_max == None:
-          mask = (self.nb <=nb_max) & mask
+            mask = (self.nb <=nb_max) & mask
 
         # Calculate yq
         yq_eq = np.zeros((self.nb[mask].shape[0], 1, self.t.shape[0]), dtype=self.dtype)
@@ -812,6 +875,27 @@ class Table:
         in0, in1 = find_valid_region(valid_nb)
 
         self.restrict_idx(in0=in0, in1=in1)
+
+    def slice_at_y_idx(self, iy):
+        """
+        Constructs a new table at a fixed composition self.yq[iy]
+        """
+        eos = self.copy(copy_data=False)
+        eos.yq = np.array(eos.yq[iy], dtype=self.dtype).reshape((-1))
+        eos.shape = (eos.nb.shape[0], 1, eos.t.shape[0])
+
+        for key in self.thermo.keys():
+            eos.thermo[key] = self.thermo[key][:,iy,:].reshape(eos.shape)
+        for key in self.Y.keys():
+            eos.Y[key] = self.Y[key][:,iy,:].reshape(eos.shape)
+        for key in self.A.keys():
+            eos.A[key] = self.A[key][:,iy,:].reshape(eos.shape)
+        for key in self.Z.keys():
+            eos.Z[key] = self.Z[key][:,iy,:].reshape(eos.shape)
+        for key in self.qK.keys():
+            eos.qK[key] = self.qK[key][:,iy,:].reshape(eos.shape)
+
+        return eos
 
     def slice_at_t_idx(self, it):
         """

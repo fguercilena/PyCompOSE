@@ -64,6 +64,7 @@ eos.shrink_to_valid_nb()
 
 # %%
 eos.write_hdf5(os.path.join(SCRIPTDIR, "SFHo", "SFHo.h5"))
+eos.write_athtab(os.path.join(SCRIPTDIR, "SFHo", "SFHo.athtab"))
 
 # %% Take the lowest T slice of the EOS
 eos_cold = eos.slice_at_t_idx(0)
