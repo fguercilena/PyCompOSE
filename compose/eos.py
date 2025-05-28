@@ -20,11 +20,17 @@ Utilities to read general purpose (3D) EOS tables
 
 from copy import deepcopy
 import h5py
-from math import pi
+from math import pi, floor
 import numpy as np
+import scipy.integrate as sint
 import os
 import sys
 import struct
+
+try:
+    from ._version import version
+except ImportError:
+    version = "unknown"
 
 class Metadata:
     """
@@ -94,12 +100,16 @@ class Table:
     That is, the temperature is the fastest running index.
     """
 
+    """ multiply to convert MeV --> g """
+    unit_mass = 1.7826619216277864e-27
     """ multiply to convert MeV --> K """
     unit_temp  = 1.0/8.617333262e-11
     """ multiply to convert MeV/fm^3 --> g/cm^3 """
     unit_dens  = 1.782662696e12
     """ multiply to convert MeV/fm^3 --> erg/cm^3 """
     unit_energy = 1.6021773299709372e33
+    """ multiply to convert unitless specific internal energy --> erg/g"""
+    unit_eps = 8.987551787368177e20
     """ multiply to convert MeV/fm^3 --> dyn/cm^2 """
     unit_press = 1.602176634e33
 
@@ -126,6 +136,10 @@ class Table:
         self.thermo = {}
         self.Y, self.A, self.Z = {}, {}, {}
         self.qK = {}
+        self.lorene_cut = 0
+
+        self.version = version
+        self.git_hash = version.split("+g")[-1]
 
     def copy(self, copy_data=True):
         """
@@ -166,12 +180,17 @@ class Table:
         u = self.mn*(self.thermo["Q7"] + 1)
         h = u + self.thermo["Q1"]
 
+        if (S.min()<=0.0):
+            S_ = S + 2*max(sys.float_info.min, abs(S.min()))
+        else:
+            S_ = S
+
         dPdn = P*self.diff_wrt_nb(np.log(P))
 
         if self.t.shape[0] > 1:
             dPdt = P*self.diff_wrt_t(np.log(P))
-            dSdn = S*self.diff_wrt_nb(np.log(S))
-            dSdt = S*self.diff_wrt_t(np.log(S))
+            dSdn = S_*self.diff_wrt_nb(np.log(S_))
+            dSdt = S_*self.diff_wrt_t(np.log(S_))
 
             self.thermo["cs2"] = (dPdn - dSdn/dSdt*dPdt)/h
         else:
@@ -180,6 +199,25 @@ class Table:
         if floor is not None:
             self.thermo["cs2"] = np.maximum(self.thermo["cs2"], floor)
         self.md.thermo[12] = ("cs2", "sound speed squared [c^2]")
+
+    def compute_abar(self):
+        """
+        Computes the average mass number
+        """
+        self.md.micro[10] = ("Abar", "average mass number")
+        self.qK["Abar"] = sum(
+            self.Y[nuc] for nuc in self.Y if nuc not in ["e", "mu", "tau"]
+        )
+        mask = self.qK["Abar"] <= 0
+        if np.any(mask):
+            print(f"sum(Y) <= 0 for {mask.sum()} points")
+
+        self.qK["Abar"][mask] = 1
+
+        self.qK["Abar"] = 1.0 / self.qK["Abar"]
+        if not np.all(phys := (self.qK["Abar"] >= 0.9999)):
+            print(f"Unphysical Abar in {np.sum(~phys)} points")
+        self.qK["Abar"] = np.clip(self.qK["Abar"], 1.0, None)
 
     def diff_wrt_nb(self, Q):
         """
@@ -575,13 +613,33 @@ class Table:
             eos.md.pairs[1] = ("e", "electron/charge/lepton fraction")
             eos.Y['e'] = yq_eq
         for key in self.A.keys():
-            eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+            try:
+                eos.A[key] = interp_to_given_yp(self.A[key], yq_eq)
+            except ValueError:
+                print("Could not interpolate A[{}]".format(key))
+                eos.A[key] = np.ones_like(yq_eq)
         for key in self.Z.keys():
-            eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+            try:
+                eos.Z[key] = interp_to_given_yp(self.Z[key], yq_eq)
+            except ValueError:
+                print("Could not interpolate Z[{}]".format(key))
+                eos.Z[key] = np.ones_like(yq_eq)
         for key in self.qK.keys():
             eos.qK[key] = interp_to_given_yp(self.qK[key], yq_eq)
 
         return eos
+
+    def find_lorene_rho_cut(self, threshold=0.5) -> int:
+        """
+        Find the density cut for the Lorene txt file
+        Returns first index where rho/P * dPdrho > threshold
+        """
+        assert self.shape[1] == self.shape[2] == 1
+        n = self.nb
+        P = self.thermo["Q1"][:, 0, 0] * n
+        dPdn = np.gradient(P, n)
+        self.lorene_cut = (n/P*dPdn).searchsorted(.5)
+        return self.lorene_cut
 
     def remove_photons(self):
         """
@@ -617,7 +675,7 @@ class Table:
         eos.thermo["Q7"] = (e - e_ph)/(self.mn*nb) - 1
 
         return eos
-    
+
     def enforce_pressure_temperature_monotonicity(self,logp=True,verb=0):
         nb = self.nb[:,np.newaxis,np.newaxis]
         p = self.thermo["Q1"]*nb
@@ -714,6 +772,112 @@ class Table:
             self.Z[key] = self.Z[key][in0:in1,iy0:iy1,it0:it1]
         for key in self.qK.keys():
             self.qK[key] = self.qK[key][in0:in1,iy0:iy1,it0:it1]
+
+    def get_polytrope(self,nb_idx):
+        """
+        Get the polytrope coefficients Gamma and Kappa (p=K*rho^G) at a given nb index.
+        
+        Only valid for 1D tables (constant T and Ye)
+        """
+        assert self.shape[0] > 1 and self.shape[1] == 1 and self.shape[2] == 1
+        
+        if nb_idx==0:
+            nb = self.nb[0:3]
+            press = self.thermo["Q1"][0:3,0,0]*nb
+            
+            log_nb = np.log(nb)
+            log_press = np.log(press)
+            
+            dlpdlnb = (-3*log_press[0] + 4*log_press[1] - log_press[2])/(log_nb[2] - log_nb[0])
+            lp = log_press[0]
+            lnb = log_nb[0]
+            
+        elif nb_idx==-1 or nb_idx==self.shape[0]-1:
+            nb = self.nb[-3:]
+            press = self.thermo["Q1"][-3:,0,0]*nb
+            
+            log_nb = np.log(nb)
+            log_press = np.log(press)
+            
+            dlpdlnb = (log_press[0] - 4*log_press[1] + 3*log_press[2])/(log_nb[2] - log_nb[0])
+            lp = log_press[2]
+            lnb = log_nb[2]
+            
+            
+        else:
+            nb = self.nb[nb_idx-1:nb_idx+2]
+            press = self.thermo["Q1"][nb_idx-1:nb_idx+2,0,0]*nb
+            
+            log_nb = np.log(nb)
+            log_press = np.log(press)
+            
+            dlpdlnb = (-1*log_press[0] + log_press[2])/(log_nb[2] - log_nb[0])
+            lp = log_press[1]
+            lnb = log_nb[1]
+            
+            
+        Gamma = dlpdlnb
+        Kappa = np.exp(lp - Gamma*(lnb + np.log(self.mn)))
+        
+        return Kappa, Gamma
+    
+    def extend_with_polytrope(self, nb_min, Kappa, Gamma):
+        """
+        Extend a 1D table down to nb_min using the polytrope given. 
+        The original grid is assumed to be in equal log spacing of nb, and this grid is extended down to nb_min, so the final nb[0]>=nb_min.
+        
+        Q1, Q3, Q6, and Q7 are calculated, Q2 is set to zero, and Q4 and Q5 repeat their values at the lower edge of the existing table
+        """
+        log_nb = np.log(self.nb)
+        log_nb_min = np.log(nb_min)
+        dlog_nb = log_nb[1] - log_nb[0]
+        new_nb_count = floor((log_nb[0]-log_nb_min)/dlog_nb)
+        new_log_nb = np.arange(-new_nb_count,0)*dlog_nb + log_nb[0]
+        new_nb = np.exp(new_log_nb)
+        
+        new_press = Kappa * ((self.mn*new_nb)**Gamma)
+        
+        new_eps_shifted = (Kappa/(Gamma-1))*((self.mn*new_nb)**(Gamma-1))
+        new_eps_0 = (Kappa/(Gamma-1))*((self.mn*self.nb[0])**(Gamma-1))
+        old_eps_0 = self.thermo["Q7"][0,0,0]
+        new_eps_const = old_eps_0 - new_eps_0
+        new_eps = new_eps_shifted + new_eps_const
+        
+        new_mub_scaled = self.mn*(1 + new_eps + (Gamma-1)*(new_eps - new_eps_const))
+        new_mub_0 = self.mn*(1 + (new_eps_0+new_eps_const) + (Gamma-1)*new_eps_0)
+        old_mub_0 = (self.thermo["Q3"][0,0,0]+1)*self.mn
+        new_mub_scale = old_mub_0 / new_mub_0
+        new_mub = new_mub_scaled * new_mub_scale
+        
+        new_thermo = {}
+        new_thermo["Q1"] = new_press/new_nb
+        new_thermo["Q2"] = np.zeros(new_nb_count)
+        new_thermo["Q3"] = (new_mub/self.mn) - 1
+        new_thermo["Q4"] = np.ones(new_nb_count)*self.thermo["Q4"][0,0,0]
+        new_thermo["Q5"] = np.ones(new_nb_count)*self.thermo["Q5"][0,0,0]
+        new_thermo["Q6"] = new_eps
+        new_thermo["Q7"] = new_eps
+        
+        eos = Table(self.md, self.dtype)
+        eos.nb = np.concatenate((new_nb,self.nb.copy()),axis=0)
+        eos.t = self.t.copy()
+        eos.yq = self.yq.copy()
+        eos.shape = (new_nb_count + self.shape[0],self.shape[1],self.shape[2])
+        eos.valid = np.zeros(eos.shape, dtype=bool)
+        eos.mn = self.mn
+        eos.mp = self.mp
+        eos.lepton = self.lepton
+
+        for key, data in self.thermo.items():
+            eos.thermo[key] = np.concatenate((new_thermo[key][:,np.newaxis,np.newaxis],data),axis=0)
+        # for key, data in self.Y.items():
+        #     eos.Y[key] = data.copy()
+        # for key, data in self.A.items():
+        #     eos.A[key] = data.copy()
+        # for key, data in self.Z.items():
+        #     eos.Z[key] = data.copy()
+
+        return eos
 
     def read(self, path, enforce_equal_spacing=False, log_idvars=(True,False,True)):
         """
@@ -817,8 +981,8 @@ class Table:
             self.Y[name] = np.zeros(self.shape, dtype=self.dtype)
         for name, desc in self.md.quads.values():
             self.Y[name] = np.zeros(self.shape, dtype=self.dtype)
-            self.A[name] = np.nan*np.ones(self.shape, dtype=self.dtype)
-            self.Z[name] = np.nan*np.ones(self.shape, dtype=self.dtype)
+            self.A[name] = np.zeros(self.shape, dtype=self.dtype)
+            self.Z[name] = np.zeros(self.shape, dtype=self.dtype)
         with open(os.path.join(self.path, "eos.compo"), "r") as cfile:
             for line in cfile:
                 L = line.split()
@@ -862,6 +1026,76 @@ class Table:
                     if K in self.md.micro:
                         self.qK[self.md.micro[K][0]][inb, iyq, it] = q
 
+    def read_from_pizza(
+        self,
+        hydro_path,
+        weak_path,
+        m_for_mub=None,
+    ):
+        """
+        This function reads the EOS from the pizza hydro and weak files and
+        initializes a pycompose Table object. Pizza tables use a "custom" mass
+        factor while CompOSE uses the neutron mass as default. The specific
+        internal energy and the chemical potentials are rescaled such that they
+        are compatible to the neutron mass.
+        Empirically, it seems that the baryon mass was not rescaled in the pizza
+        tables. To correct this, use m_for_mb=931.4941 (atomic mass unit).
+        """
+        with h5py.File(hydro_path, 'r') as hf:
+            hydro = {key: np.array(hf[key][:]) for key in hf}
+        with h5py.File(weak_path, 'r') as hf:
+            weak = {key: np.array(hf[key][:]) for key in hf}
+
+        for key, ar in {**hydro, **weak}.items():
+            if not len(ar.shape) == 3:
+                continue
+            hydro[key] = np.transpose(ar, (2, 0, 1))
+        del weak
+
+        mb = hydro['mass_factor']
+
+        if m_for_mub is None:
+            m_for_mub = mb
+
+        self.mn = 939.56535
+        self.mp = 938.27209
+        self.nb = hydro['density'] / Table.unit_dens/mb
+        self.t = hydro['temperature']
+        self.yq = hydro['ye']
+
+        self.shape = (self.nb.shape[0], self.yq.shape[0], self.t.shape[0])
+        self.valid = np.ones(self.shape, dtype=bool)
+        self.lepton = True
+
+        self.thermo["Q1"] = hydro['pressure'] / Table.unit_press / self.nb[:, None, None]
+        self.thermo["Q2"] = hydro['entropy']
+        mu_e = hydro["mu_e"]
+        mu_p = hydro["mu_p"]
+        mu_n = hydro["mu_n"]
+        eps = hydro['internalEnergy'] / Table.unit_eps
+        # transform to new mass factor
+        eps = (1+eps)*mb/self.mn - 1
+        self.thermo["Q7"] = eps
+        temp_entr = self.t[None,  None, :]*self.thermo["Q2"]
+        self.thermo["Q6"] = eps - temp_entr/self.mn
+
+        self.thermo["Q3"] = (mu_n  + m_for_mub)/self.mn - 1
+        self.thermo["Q4"] = (mu_p - mu_n)/self.mn
+        self.thermo["Q5"] = (mu_e + mu_p - mu_n)/self.mn
+
+        self.Y["e"] = np.meshgrid(self.nb, self.yq, self.t, indexing='ij')[1]
+        self.Y["n"] = hydro['Xn']
+        self.Y["p"] = hydro['Xp']
+        self.Y["He4"] = hydro['Xa']/4
+        # "Abar" in Pizza seems to refer to the A of the representative nucleus
+        self.Y["N"] = hydro["Xh"]/hydro["Abar"]
+        for name, _ in self.md.pairs.values():
+            if name not in self.Y:
+                self.Y[name] = np.zeros_like(self.Y['e'])
+
+        self.A["N"] = hydro["Abar"]
+        self.Z["N"] = hydro["Zbar"]
+
     def shrink_to_valid_nb(self):
         """
         Restrict the range of nb
@@ -873,6 +1107,15 @@ class Table:
 
         valid_nb = np.all(self.valid, axis=(1,2))
         in0, in1 = find_valid_region(valid_nb)
+
+        excl_str = []
+        if in0 != 0:
+            excl_str.append(f"0 - {in0}")
+        if in1 != self.shape[0]:
+            excl_str.append(f"{in1} - {self.shape[0]}")
+        if len(excl_str) > 0:
+            excl_str = " and i_n=".join(excl_str)
+            print(f"removing i_n={excl_str} to nb-range {self.nb[in0]}-{self.nb[in1]}!")
 
         self.restrict_idx(in0=in0, in1=in1)
 
@@ -928,7 +1171,78 @@ class Table:
         if check_cs2_max:
             self.valid = self.valid & (self.thermo["cs2"] < 1)
 
+    @staticmethod
+    def _extend_copy(arr, n_nb, n_t):
+        sn, sy, st = arr.shape
+        new_shape = (sn+n_nb, sy, st+n_t)
+        new = np.zeros(new_shape, dtype=arr.dtype)
+        new[:sn, :sy, :st] = arr
+        new[sn:, :sy, :st] = arr[-1][None, :]
+        new[:sn, :sy, st:] = arr[:, :, -1][:, :, None]
+        new[sn:, :sy, st:] = arr[-1, :, -1][None, :, None]
+        return new
+
+    def extend_table(self, n_nb, n_t):
+        '''
+        This adapts the logic in
+        https://bitbucket.org/FreeTHC/thcextra/src/master/EOS_Thermal_Extable
+        to extend the table to higher T and nb by n_nb and n_t points, respectively.
+        Namely, all fields except pressure and internal energy are simply copied
+        from the last point in the table.
+        The internal energy and pressure are calculated via:
+
+        eps = eps(rho_cap, T_cap, Y_e) + eps_th(T) + delta_eps(rho, Y_e)
+        P = P(rho_cap, T_cap, Y_e) + Gamma_th (rho_cap, Y) rho eps_th
+
+        with
+
+        rho_cap = min(rho, rho_max)
+        T_cap = min(T, T_max)
+        eps_th = max((T - T_max)/m_B, 0)
+        delta_eps = P(rho_max, T_min, Y_e) (1/rho_max - 1/rho)
+        Gamma_th = (P(rho, T_max, Y_e) - P(rho, T_min, Y_e))/(rho(eps(rho, T_max, Y_e) - eps(rho, T_min, Y_e)))
+
+        Note that the Gamma_th addition to the pressure is not in Extable but is
+        probably necessary in athena because the temperature needs to be recoverable
+        via root finding of the pressure so it has to always depend monotonically on T.
+        '''
+        dln = np.log10(self.nb[-1]) - np.log10(self.nb[-2])
+        dlt = np.log10(self.t[-1]) - np.log10(self.t[-2])
+        sn, sy, st = self.shape
+        new_shape = (sn+n_nb, sy, st+n_t)
+
+        self.shape = new_shape
+        self.nb = np.concatenate((self.nb, self.nb[-1]*10**(np.arange(1, n_nb+1)*dln)))
+        self.t = np.concatenate((self.t, self.t[-1]*10**(np.arange(1, n_t+1)*dlt)))
+        for grp in (self.thermo, self.Y, self.A, self.Z, self.qK):
+            for key, data in grp.items():
+                grp[key] = self._extend_copy(data, n_nb, n_t)
+        self.valid = self._extend_copy(self.valid, n_nb, n_t)
+
+        # calculate new pressure and epsilon
+        p = self.thermo['Q1']*self.nb[:, None, None]
+        eps = self.thermo['Q7']
+        rho = self.nb[:, None, None]*self.mn
+
+        p_th = (p - p[..., 0, None])
+        eps_th = (eps - eps[..., 0, None])
+        eps_th[..., 0] = eps_th[..., 1] # prevent div by 0
+        gthm1 = p_th/(eps_th*rho)
+        gthm1[sn:, :, :st] = gthm1[sn-1, :, :st]
+        gthm1[:, :, st:] = gthm1[..., st-1, None]
+
+        deps = np.zeros(new_shape)
+        deps[sn:] = p[sn-1, :, 0, None]*(1/rho[sn-1] - 1/rho[sn:])
+        th_eps = np.zeros(new_shape)
+        th_eps[..., st:] = (self.t[st:] - self.t[st-1])/self.mn
+        th_p = gthm1 * th_eps * rho
+
+        self.thermo["Q1"] += th_p/self.nb[:, None, None]
+        self.thermo["Q7"] += th_eps + deps
+
     def _write_data(self, dfile, dtype):
+        dfile.attrs['version'] = self.version
+        dfile.attrs['git_hash'] = self.git_hash
         dfile.create_dataset("nb", dtype=dtype, data=self.nb,
             compression="gzip", compression_opts=9)
         dfile.create_dataset("t", dtype=dtype, data=self.t,
@@ -993,6 +1307,7 @@ class Table:
         with h5py.File(fname, "a") as dfile:
             cs_grp = dfile.require_group("cold_slice")
             self._write_data(cs_grp, dtype)
+            cs_grp["lorene_cut"] = self.lorene_cut
 
     def write_athtab(self, fname, dtype=np.float64, endian='native'):
         """
@@ -1083,12 +1398,35 @@ class Table:
         assert self.shape[2] == 1
 
         with open(fname, "w") as f:
-            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % len(self.nb))
-            for i in range(len(self.nb)):
+            f.write("#\n#\n#\n#\n#\n%d\n#\n#\n#\n" % (len(self.nb) - self.lorene_cut))
+            for ind, i in enumerate(range(self.lorene_cut, len(self.nb))):
                 nb = self.nb[i]
                 e  = Table.unit_dens*self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = Table.unit_press*self.thermo["Q1"][i,0,0]*self.nb[i]
-                f.write("%d %.15e %.15e %.15e\n" % (i, nb, e, p))
+                f.write("%d %.15e %.15e %.15e\n" % (ind+1, nb, e, p))
+
+    def write_rns(self, fname):
+        """
+        Export the table in RNS format. This is only possible for 1D tables.
+        """
+        assert self.shape[1] == 1
+        assert self.shape[2] == 1
+
+        sed = self.thermo["Q7"][:,0,0]
+        p = self.thermo["Q1"][:,0,0]*self.nb
+        ed = (1 + sed) * self.mn * self.nb
+        h = sint.cumulative_trapezoid(1.0/(ed + p), p)
+        nd_CGS = self.nb * Table.unit_dens/Table.unit_mass
+        tmd_CGS = Table.unit_dens*ed
+        p_CGS = Table.unit_press*p
+        h_CGS = h * Table.unit_eps
+        h_CGS[0] = 1 # Exact value = 0, but RNS seems to require that.
+        p_CGS[0] = 1
+
+        with open(fname, 'w') as f:
+            f.write(f"{len(tmd_CGS):d} \n")
+            for ed,p,h,n in zip(tmd_CGS, p_CGS, h_CGS, nd_CGS):
+                f.write(f"{ed:.15e}  {p:.15e}  {h:.15e}  {n:.15e} \n")
 
     def write_txt(self, fname):
         """

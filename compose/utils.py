@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import numpy as np
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, RegularGridInterpolator
 from scipy.optimize import minimize_scalar
 
 def find_valid_region(arr):
@@ -68,7 +68,7 @@ def find_temp_given_ent(t, yq, S, S0, options={'xatol': 1e-2, 'maxiter': 100}):
 
     options are passed to `scipy.optimize.minimize_scalar`
     """
-    tout = np.zeros_like(ye1d)
+    tout = np.zeros_like(yq)
     for iyq in range(yq.shape[0]):
         f = interpolator(t, (S[iyq,:] - S0)**2)
         res = minimize_scalar(f, bounds=(t[0], t[-1]), method='bounded',
@@ -128,3 +128,155 @@ def read_micro_composite_index(Ki):
     variable_names = (variable_symbol.format(*particle_names), variable_description.format(*particle_names))
 
     return variable_names
+
+def convert_to_NQTs(fname_in, fname_out, NQT_order=2, use_bithacks=True):
+    import h5py
+
+    # Switching for different NQT forms
+    if NQT_order == 1 and use_bithacks:
+        from .NQTs.NQTLib import NQT_exp2_O1 as NQT_exp
+        from .NQTs.NQTLib import NQT_log2_O1 as NQT_log
+    elif NQT_order == 2 and use_bithacks:
+        from .NQTs.NQTLib import NQT_exp2_O2 as NQT_exp
+        from .NQTs.NQTLib import NQT_log2_O2 as NQT_log
+    if NQT_order == 1 and not use_bithacks:
+        from .NQTs.NQTLib import NQT_exp2_ldexp_O1 as NQT_exp
+        from .NQTs.NQTLib import NQT_log2_frexp_O1 as NQT_log
+    elif NQT_order == 2 and not use_bithacks:
+        from .NQTs.NQTLib import NQT_exp2_ldexp_O2 as NQT_exp
+        from .NQTs.NQTLib import NQT_log2_frexp_O2 as NQT_log
+
+    table_h5_in = h5py.File(fname_in,"r")
+    table_h5_out = h5py.File(fname_out,"w")
+
+    # These are the necessary datasets for evolution.
+    # These and only these will be converted and copied.
+    # They must all be present in the input file.
+    """
+    [
+    'Q1',
+    'Q2',
+    'Q3',
+    'Q4',
+    'Q5',
+    'Q6',
+    'Q7',
+    'cs2',
+    'mn',
+    'mp',
+    'nb',
+    't',
+    'yq'
+    ]
+    """
+
+    # These datasets can be copied directly.
+    dsets_to_copy = ["mn","mp","yq"]
+    for key in dsets_to_copy:
+        table_h5_in.copy(table_h5_in[key],table_h5_out,key)
+
+    # Thses datasets need interpolation onto the new grid, but are otherwise unchanged.
+    dsets_to_interp = ["Q2","Q3","Q4","Q5","Q6","cs2"]
+
+    # Set which datasets will use log-space interpolation.
+    log_data = {}
+    for key in dsets_to_interp:
+        log_data[key] = False
+    log_data["cs2"] = True
+
+    # Get the shape of the data from Q1
+    input_shape = table_h5_in["Q1"].shape
+
+    # Determine the dimensionality of the table
+    dims = np.sum(input_shape != 1)
+
+    # Only support for 1D and 3D tables is present
+    assert dims==1 or dims==3, "convert_to_NQTs() only supports 1- and 3-dimensional tables."
+
+    # Only support for 1D tables in rho is present
+    if dims==1:
+        assert input_shape[0]>1, "convert_to_NQTs() only supports 1-dimensional tables in rho."
+
+    # Set up grid for interpolation
+    nb_min = table_h5_in["nb"][0]*(1+1e-15)
+    nb_max = table_h5_in["nb"][-1]*(1-1e-15)
+    nb_new = NQT_exp(np.linspace(NQT_log(nb_min), NQT_log(nb_max), num=table_h5_in["nb"].shape[0]))
+
+    if dims==3:
+        t_min = table_h5_in["t"][0]*(1+1e-15)
+        t_max = table_h5_in["t"][-1]*(1-1e-15)
+        t_new  = NQT_exp(np.linspace(NQT_log(t_min),  NQT_log(t_max),  num=table_h5_in["t"].shape[0]))
+    elif dims==1:
+        t_new = table_h5_in["t"]
+
+    table_h5_out.create_dataset("nb",data=nb_new)
+    table_h5_out.create_dataset("t",data=t_new)
+
+    log_nb_old = np.log(table_h5_in["nb"])
+    log_nb_new = np.log(nb_new)
+
+    log_t_old = np.log(table_h5_in["t"])
+    log_t_new = np.log(t_new)
+
+    if dims == 3:
+        interp_x_old = (log_nb_old,log_t_old)
+        MG_log_nb_new, MG_log_t_new = np.meshgrid(log_nb_new,log_t_new,indexing="ij")
+        interp_X_new = np.array([MG_log_nb_new.flatten(),MG_log_t_new.flatten()]).T
+    elif dims == 1:
+        interp_x_old = (log_nb_old,)
+        interp_X_new = log_nb_new
+
+    # Interpolate to new grid
+    for key in dsets_to_interp:
+        data_old = np.array(table_h5_in[key])
+        data_new = np.zeros((nb_new.shape[0],data_old.shape[1],t_new.shape[0]))
+
+        for yq_idx in range(data_old.shape[1]):
+            data_current = data_old[:,yq_idx,:]
+            if log_data[key]:
+                data_current = np.log(data_current)
+            interp_current = RegularGridInterpolator(interp_x_old, data_current, method="linear")
+            data_result = interp_current(interp_X_new).reshape((data_new.shape[0],data_new.shape[2]))
+            if log_data[key]:
+                data_result = np.exp(data_result)
+            data_new[:,yq_idx,:] = data_result
+
+        table_h5_out.create_dataset(key,data=data_new)
+
+    # For Q1 and Q7 we interpolate pressure and energy, then calculate Q1 and Q7 from those
+    press_old = (np.array(table_h5_in["Q1"]))*(np.array(table_h5_in["nb"])[:,np.newaxis,np.newaxis])
+    energy_old = ((np.array(table_h5_in["Q7"]))+1)*((np.array(table_h5_in["nb"]))[:,np.newaxis,np.newaxis])*(table_h5_in["mn"][()])
+
+    press_new = np.zeros((nb_new.shape[0],data_old.shape[1],t_new.shape[0]))
+    energy_new = np.zeros((nb_new.shape[0],data_old.shape[1],t_new.shape[0]))
+
+    # Do pressure and energy interpolation
+    for yq_idx in range(data_old.shape[1]):
+        press_current = press_old[:,yq_idx,:]
+        energy_current = energy_old[:,yq_idx,:]
+
+        press_interp_current  = RegularGridInterpolator(interp_x_old, np.log(press_current),  method="linear")
+        energy_interp_current = RegularGridInterpolator(interp_x_old, np.log(energy_current), method="linear")
+
+        press_result  = press_interp_current(interp_X_new).reshape((press_new.shape[0],press_new.shape[2]))
+        energy_result = energy_interp_current(interp_X_new).reshape((energy_new.shape[0],energy_new.shape[2]))
+
+        press_new[:,yq_idx,:] = np.exp(press_result)
+        energy_new[:,yq_idx,:] = np.exp(energy_result)
+
+    # Calculate Q1 and Q7
+    Q1_new = press_new/(nb_new[:,np.newaxis,np.newaxis])
+    Q7_new = (energy_new/((nb_new[:,np.newaxis,np.newaxis])*(table_h5_out["mn"][()]))) - 1
+
+    table_h5_out.create_dataset("Q1",data=Q1_new)
+    table_h5_out.create_dataset("Q7",data=Q7_new)
+
+    # Report to user
+    print("Datasets created:")
+    print(table_h5_out.keys())
+
+    # Finish up
+    table_h5_in.close()
+    table_h5_out.close()
+
+    return None
