@@ -1412,14 +1412,19 @@ class Table:
         assert self.shape[1] == 1
         assert self.shape[2] == 1
 
-        sed = self.thermo["Q7"][:,0,0]
-        p = self.thermo["Q1"][:,0,0]*self.nb
-        ed = (1 + sed) * self.mn * self.nb
+        icut = self.lorene_cut
+        sed = self.thermo["Q7"][icut:,0,0]
+        nb = self.nb[icut:]
+        p = self.thermo["Q1"][icut:,0,0]*nb
+        p -= p[0]
+        ed = (1 + sed) * self.mn * nb
         h = sint.cumulative_trapezoid(1.0/(ed + p), p)
-        nd_CGS = self.nb * Table.unit_dens/Table.unit_mass
-        tmd_CGS = Table.unit_dens*ed
-        p_CGS = Table.unit_press*p
-        h_CGS = h * Table.unit_eps
+
+        nd_CGS = 1e39 * nb
+        tmd_CGS = Table.unit_dens * ed
+        p_CGS = Table.unit_press * p
+        h_CGS = Table.unit_eps * h
+
         h_CGS[0] = 1 # Exact value = 0, but RNS seems to require that.
         p_CGS[0] = 1
 
