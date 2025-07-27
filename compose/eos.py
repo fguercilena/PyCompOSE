@@ -450,7 +450,7 @@ class Table:
                     f = interpolator(self.t, var3d[inb,iy,:])
                     out[inb,iy,0] = f(t_s[inb,iy,0])
             return out
-        
+
         # Restrict the range if necessary
         mask = self.nb >= 0
         if not nb_min == None:
@@ -539,7 +539,7 @@ class Table:
         t_eq = np.zeros((self.nb[mask].shape[0], 1, 1), dtype=self.dtype)
         for inb in range(len(self.nb[mask])):
             t_eq[inb,0,0] = f_t(self.nb[mask][inb])
-        #for inb in range(len(self.nb[mask])):
+        # for inb in range(len(self.nb[mask])):
         #    S0 = f_ent(self.nb[mask][inb])
         #    f = interpolator(self.t, (s_2d[inb,0,:] - S0)**2)
         #    res = minimize_scalar(f, bounds=(self.t[0], self.t[-1]), method='bounded',
@@ -688,21 +688,47 @@ class Table:
         if verb>0: print(np.sum((p[1:,:,:] - p[:-1,:,:])<0.0))
 
         for nb_idx in range(self.shape[0]):
-            if verb>1: print(nb_idx,end="\r")
+            if verb > 1:
+                print(nb_idx, end="\r")
             for yq_idx in range(self.shape[1]):
                 t_idx = 0
-                while t_idx < self.shape[2]-1:
+                while t_idx < self.shape[2] - 1:
                     start_idx = t_idx
-                    while p[nb_idx,yq_idx,t_idx+1]<=p[nb_idx,yq_idx,start_idx]:
+                    while p[nb_idx, yq_idx, t_idx + 1] <= p[nb_idx, yq_idx, start_idx]:
                         t_idx += 1
                     end_idx = t_idx + 1
 
-                    if end_idx>start_idx+1:
-                        if verb>2: print()
-                        while np.any((p[nb_idx,yq_idx,start_idx+1:end_idx+1]-p[nb_idx,yq_idx,start_idx:end_idx])<0):
-                            if verb>2: print(nb_idx,yq_idx,start_idx,end_idx,p[nb_idx,yq_idx,start_idx],p[nb_idx,yq_idx,end_idx],np.min(p[nb_idx,yq_idx,start_idx+1:end_idx+1]-p[nb_idx,yq_idx,start_idx:end_idx]),end="\r")
-                            p[nb_idx,yq_idx,start_idx+1:end_idx] = (p[nb_idx,yq_idx,start_idx:end_idx-1] + p[nb_idx,yq_idx,start_idx+1:end_idx] + p[nb_idx,yq_idx,start_idx+2:end_idx+1])/3
-                        if verb>2: print()
+                    if end_idx > start_idx + 1:
+                        if verb > 2:
+                            print()
+                        while np.any(
+                            (
+                                p[nb_idx, yq_idx, start_idx + 1 : end_idx + 1]
+                                - p[nb_idx, yq_idx, start_idx:end_idx]
+                            )
+                            < 0
+                        ):
+                            if verb > 2:
+                                print(
+                                    nb_idx,
+                                    yq_idx,
+                                    start_idx,
+                                    end_idx,
+                                    p[nb_idx, yq_idx, start_idx],
+                                    p[nb_idx, yq_idx, end_idx],
+                                    np.min(
+                                        p[nb_idx, yq_idx, start_idx + 1 : end_idx + 1]
+                                        - p[nb_idx, yq_idx, start_idx:end_idx]
+                                    ),
+                                    end="\r",
+                                )
+                            p[nb_idx, yq_idx, start_idx + 1 : end_idx] = (
+                                p[nb_idx, yq_idx, start_idx : end_idx - 1]
+                                + p[nb_idx, yq_idx, start_idx + 1 : end_idx]
+                                + p[nb_idx, yq_idx, start_idx + 2 : end_idx + 1]
+                            ) / 3
+                        if verb > 2:
+                            print()
                     t_idx += 1
 
         if verb>0: print(np.sum((p[:,:,1:] - p[:,:,:-1])<0.0))
@@ -780,53 +806,54 @@ class Table:
         Only valid for 1D tables (constant T and Ye)
         """
         assert self.shape[0] > 1 and self.shape[1] == 1 and self.shape[2] == 1
-        
+
         if nb_idx==0:
             nb = self.nb[0:3]
             press = self.thermo["Q1"][0:3,0,0]*nb
-            
+
             log_nb = np.log(nb)
             log_press = np.log(press)
-            
+
             dlpdlnb = (-3*log_press[0] + 4*log_press[1] - log_press[2])/(log_nb[2] - log_nb[0])
             lp = log_press[0]
             lnb = log_nb[0]
-            
+
         elif nb_idx==-1 or nb_idx==self.shape[0]-1:
             nb = self.nb[-3:]
             press = self.thermo["Q1"][-3:,0,0]*nb
-            
+
             log_nb = np.log(nb)
             log_press = np.log(press)
-            
+
             dlpdlnb = (log_press[0] - 4*log_press[1] + 3*log_press[2])/(log_nb[2] - log_nb[0])
             lp = log_press[2]
             lnb = log_nb[2]
-            
-            
+
         else:
             nb = self.nb[nb_idx-1:nb_idx+2]
             press = self.thermo["Q1"][nb_idx-1:nb_idx+2,0,0]*nb
-            
+
             log_nb = np.log(nb)
             log_press = np.log(press)
-            
+
             dlpdlnb = (-1*log_press[0] + log_press[2])/(log_nb[2] - log_nb[0])
             lp = log_press[1]
             lnb = log_nb[1]
-            
-            
+
         Gamma = dlpdlnb
         Kappa = np.exp(lp - Gamma*(lnb + np.log(self.mn)))
-        
+
         return Kappa, Gamma
-    
+
     def extend_with_polytrope(self, nb_min, Kappa, Gamma):
         """
-        Extend a 1D table down to nb_min using the polytrope given. 
-        The original grid is assumed to be in equal log spacing of nb, and this grid is extended down to nb_min, so the final nb[0]>=nb_min.
-        
-        Q1, Q3, Q6, and Q7 are calculated, Q2 is set to zero, and Q4 and Q5 repeat their values at the lower edge of the existing table
+        Extend a 1D table down to nb_min using the polytrope given.
+        The original grid is assumed to be in equal log spacing of nb,
+        and this grid is extended down to nb_min, so the final
+        nb[0]>=nb_min.
+
+        Q1, Q3, Q6, and Q7 are calculated, Q2 is set to zero, and Q4 and
+        Q5 repeat their values at the lower edge of the existing table
         """
         log_nb = np.log(self.nb)
         log_nb_min = np.log(nb_min)
@@ -834,21 +861,21 @@ class Table:
         new_nb_count = floor((log_nb[0]-log_nb_min)/dlog_nb)
         new_log_nb = np.arange(-new_nb_count,0)*dlog_nb + log_nb[0]
         new_nb = np.exp(new_log_nb)
-        
+
         new_press = Kappa * ((self.mn*new_nb)**Gamma)
-        
+
         new_eps_shifted = (Kappa/(Gamma-1))*((self.mn*new_nb)**(Gamma-1))
         new_eps_0 = (Kappa/(Gamma-1))*((self.mn*self.nb[0])**(Gamma-1))
         old_eps_0 = self.thermo["Q7"][0,0,0]
         new_eps_const = old_eps_0 - new_eps_0
         new_eps = new_eps_shifted + new_eps_const
-        
+
         new_mub_scaled = self.mn*(1 + new_eps + (Gamma-1)*(new_eps - new_eps_const))
         new_mub_0 = self.mn*(1 + (new_eps_0+new_eps_const) + (Gamma-1)*new_eps_0)
         old_mub_0 = (self.thermo["Q3"][0,0,0]+1)*self.mn
         new_mub_scale = old_mub_0 / new_mub_0
         new_mub = new_mub_scaled * new_mub_scale
-        
+
         new_thermo = {}
         new_thermo["Q1"] = new_press/new_nb
         new_thermo["Q2"] = np.zeros(new_nb_count)
@@ -857,7 +884,7 @@ class Table:
         new_thermo["Q5"] = np.ones(new_nb_count)*self.thermo["Q5"][0,0,0]
         new_thermo["Q6"] = new_eps
         new_thermo["Q7"] = new_eps
-        
+
         eos = Table(self.md, self.dtype)
         eos.nb = np.concatenate((new_nb,self.nb.copy()),axis=0)
         eos.t = self.t.copy()
@@ -897,46 +924,19 @@ class Table:
             nb_log, yq_log, t_log = log_idvars
 
             if nb_log:
-                nb_min = np.log(self.nb[0])
-                nb_max = np.log(self.nb[-1])
+                self.nb = np.logspace(np.log(self.nb[0]), np.log(self.nb[-1]), self.nb.shape[0])
             else:
-                nb_min = self.nb[0]
-                nb_max = self.nb[-1]
-            d_nb = (nb_max - nb_min)/(self.shape[0] - 1)
-
-            for idx in range(1,self.shape[0]-1):
-                if nb_log:
-                    self.nb[idx] = np.exp(nb_min + idx*d_nb)
-                else:
-                    self.nb[idx] = nb_min + idx*d_nb
+                self.nb = np.linspace(self.nb[0], self.nb[-1], self.nb.shape[0])
 
             if yq_log:
-                yq_min = np.log(self.yq[0])
-                yq_max = np.log(self.yq[-1])
+                self.yq = np.logspace(np.log(self.yq[0]), np.log(self.yq[-1]), self.yq.shape[0])
             else:
-                yq_min = self.yq[0]
-                yq_max = self.yq[-1]
-            d_yq = (yq_max - yq_min)/(self.shape[1] - 1)
-
-            for idx in range(1,self.shape[1]-1):
-                if yq_log:
-                    self.yq[idx] = np.exp(yq_min + idx*d_yq)
-                else:
-                    self.yq[idx] = yq_min + idx*d_yq
+                self.yq = np.linspace(self.yq[0], self.yq[-1], self.yq.shape[0])
 
             if t_log:
-                t_min = np.log(self.t[0])
-                t_max = np.log(self.t[-1])
+                self.t = np.logspace(np.log(self.t[0]), np.log(self.t[-1]), self.t.shape[0])
             else:
-                t_min = self.t[0]
-                t_max = self.t[-1]
-            d_t = (t_max - t_min)/(self.shape[2] - 1)
-
-            for idx in range(1,self.shape[2]-1):
-                if t_log:
-                    self.t[idx] = np.exp(t_min + idx*d_t)
-                else:
-                    self.t[idx] = t_min + idx*d_t
+                self.t = np.linspace(self.t[0], self.t[-1], self.t.shape[0])
 
         L = open(os.path.join(path, "eos.thermo"), "r").readline().split()
         self.mn = float(L[0])
@@ -1447,7 +1447,6 @@ class Table:
                 e  = self.nb[i]*self.mn*(self.thermo["Q7"][i,0,0] + 1)
                 p  = self.thermo["Q1"][i,0,0]*self.nb[i]
                 f.write("%.15e %.15e %.15e\n" % (nb, e, p))
-
 
     def write_number_fractions(self, fname):
         """
