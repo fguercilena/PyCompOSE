@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-# Tested using: https://compose.obspm.fr/eos/34 and DD2_hydro_30-Mar-2015.h5
+# Tested using: https://compose.obspm.fr/eos/18 and DD2_hydro_30-Mar-2015.h5
 #
 # This example shows how to import/export CompOSE tables and compute the sound speed
 #
@@ -104,7 +104,7 @@ iyq = np.argmin(np.abs(eos.yq - Y_e))
 plt.figure()
 plt.plot(eos.t, eos.thermo["Q1"][0,iyq,:]/eos.t**4)
 plt.xlabel(r"$T\ [{\rm MeV}]$")
-plt.ylabel(r"$p/(nb*T^4)\ [{\rm MeV}^3]$")
+plt.ylabel(r"$p/(n_b T^4)\ [{\rm MeV}^3]$")
 plt.xscale("log")
 plt.yscale("log")
 

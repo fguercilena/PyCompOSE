@@ -104,7 +104,7 @@ iyq = np.argmin(np.abs(eos.yq - Y_e))
 plt.figure()
 plt.plot(eos.t, eos.thermo["Q1"][0,iyq,:]/eos.t**4)
 plt.xlabel(r"$T\ [{\rm MeV}]$")
-plt.ylabel(r"$p/(nb*T^4)\ [{\rm MeV}^3]$")
+plt.ylabel(r"$p/(n_b T^4)\ [{\rm MeV}^3]$")
 plt.xscale("log")
 plt.yscale("log")
 

@@ -924,17 +924,20 @@ class Table:
             nb_log, yq_log, t_log = log_idvars
 
             if nb_log:
-                self.nb = np.logspace(np.log(self.nb[0]), np.log(self.nb[-1]), self.nb.shape[0])
+                self.nb = np.logspace(np.log10(self.nb[0]), np.log10(self.nb[-1]),
+                                      self.nb.shape[0], base=10)
             else:
                 self.nb = np.linspace(self.nb[0], self.nb[-1], self.nb.shape[0])
 
             if yq_log:
-                self.yq = np.logspace(np.log(self.yq[0]), np.log(self.yq[-1]), self.yq.shape[0])
+                self.yq = np.logspace(np.log10(self.yq[0]), np.log10(self.yq[-1]),
+                                      self.yq.shape[0], base=10)
             else:
                 self.yq = np.linspace(self.yq[0], self.yq[-1], self.yq.shape[0])
 
             if t_log:
-                self.t = np.logspace(np.log(self.t[0]), np.log(self.t[-1]), self.t.shape[0])
+                self.t = np.logspace(np.log10(self.t[0]), np.log10(self.t[-1]),
+                                     self.t.shape[0], base=10)
             else:
                 self.t = np.linspace(self.t[0], self.t[-1], self.t.shape[0])
 
