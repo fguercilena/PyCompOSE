@@ -185,7 +185,7 @@ def convert_to_NQTs(fname_in, fname_out, NQT_order=2, use_bithacks=True):
     log_data["cs2"] = True
 
     # Get the shape of the data from Q1
-    input_shape = table_h5_in["Q1"].shape
+    input_shape = np.array(table_h5_in["Q1"].shape)
 
     # Determine the dimensionality of the table
     dims = np.sum(input_shape != 1)
