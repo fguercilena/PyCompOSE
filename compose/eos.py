@@ -676,6 +676,72 @@ class Table:
 
         return eos
 
+    def enforce_energy_temperature_monotonicity(self,loge=True,verb=0):
+        nb = self.nb[:,np.newaxis,np.newaxis]
+        e = (self.thermo["Q7"] + 1.)*nb*self.mn
+        if loge:
+            e = np.log(e)
+
+        eos_new = self.copy()
+
+        if verb>0: print(np.sum((e[:,:,1:] - e[:,:,:-1])<0.0))
+        if verb>0: print(np.sum((e[1:,:,:] - e[:-1,:,:])<0.0))
+
+        for nb_idx in range(self.shape[0]):
+            if verb > 1:
+                print(nb_idx, end="\r")
+            for yq_idx in range(self.shape[1]):
+                t_idx = 0
+                while t_idx < self.shape[2] - 1:
+                    start_idx = t_idx
+                    while e[nb_idx, yq_idx, t_idx + 1] <= e[nb_idx, yq_idx, start_idx]:
+                        t_idx += 1
+                    end_idx = t_idx + 1
+
+                    if end_idx > start_idx + 1:
+                        if verb > 2:
+                            print()
+                        while np.any(
+                            (
+                                e[nb_idx, yq_idx, start_idx + 1 : end_idx + 1]
+                                - e[nb_idx, yq_idx, start_idx:end_idx]
+                            )
+                            < 0
+                        ):
+                            if verb > 2:
+                                print(
+                                    nb_idx,
+                                    yq_idx,
+                                    start_idx,
+                                    end_idx,
+                                    e[nb_idx, yq_idx, start_idx],
+                                    e[nb_idx, yq_idx, end_idx],
+                                    np.min(
+                                        e[nb_idx, yq_idx, start_idx + 1 : end_idx + 1]
+                                        - e[nb_idx, yq_idx, start_idx:end_idx]
+                                    ),
+                                    end="\r",
+                                )
+                            e[nb_idx, yq_idx, start_idx + 1 : end_idx] = (
+                                e[nb_idx, yq_idx, start_idx : end_idx - 1]
+                                + e[nb_idx, yq_idx, start_idx + 1 : end_idx]
+                                + e[nb_idx, yq_idx, start_idx + 2 : end_idx + 1]
+                            ) / 3
+                        if verb > 2:
+                            print()
+                    t_idx += 1
+
+        if verb>0: print(np.sum((e[:,:,1:] - e[:,:,:-1])<0.0))
+        if verb>0: print(np.sum((e[1:,:,:] - e[:-1,:,:])<0.0))
+
+        if loge:
+            e = np.exp(e)
+
+        eos_new.thermo["Q7"] = e/(nb*self.mn) - 1.
+
+        return eos_new
+
+
     def enforce_pressure_temperature_monotonicity(self,logp=True,verb=0):
         nb = self.nb[:,np.newaxis,np.newaxis]
         p = self.thermo["Q1"]*nb
