@@ -1673,6 +1673,7 @@ class Table:
         # 3D tables of nb and T
         nb = self.nb[:, np.newaxis, np.newaxis]
         inb = 1 / nb
+        inb_mn = inb / self.mn
         T = self.t[np.newaxis, np.newaxis, :]
         iT = 1 / T
 
@@ -1686,7 +1687,7 @@ class Table:
         mu_p = (self.thermo["Q3"] + self.thermo["Q4"] + 1.0) * self.mn
         mu_e = (self.thermo["Q5"] - self.thermo["Q4"]) * self.mn
 
-        # 3D table of neutrino chemical potentials
+        # 3D tables of neutrino chemical potentials
         mu_nue = mu_e + mu_p - mu_n
         mu_anue = -mu_nue
         mu_numu = np.zeros_like(mu_nue)
@@ -1694,7 +1695,7 @@ class Table:
         mu_nutau = np.zeros_like(mu_nue)
         mu_anutau = np.zeros_like(mu_nue)
 
-        # 3D table of neutrino degeneracy parameters
+        # 3D tables of neutrino degeneracy parameters
         eta_nue = mu_nue * iT
         eta_anue = mu_anue * iT
         eta_numu = mu_numu * iT
@@ -1710,13 +1711,8 @@ class Table:
         Q7_nutau = F3(eta_nutau)
         Q7_anutau = F3(eta_anutau)
 
-        Q7_nu_tot = (
-            (Q7_nue + Q7_anue + Q7_numu + Q7_anumu + Q7_nutau + Q7_anutau)
-            * K
-            * T**4
-            * inb
-            / self.mn
-        )
+        Q7_nu_tot = Q7_nue + Q7_anue + Q7_numu + Q7_anumu + Q7_nutau + Q7_anutau
+        Q7_nu_tot *= K * T**4 * inb_mn
 
         self.thermo["Q7"] += Q7_nu_tot * exp_factor
 
@@ -1733,23 +1729,20 @@ class Table:
         Q2_nutau = (4.0 / 3.0) * F3(eta_nutau) - eta_nutau * F2(eta_nutau)
         Q2_anutau = (4.0 / 3.0) * F3(eta_anutau) - eta_nutau * F2(eta_anutau)
 
-        Q2_nu_tot = (
-            (Q2_nue + Q2_anue + Q2_numu + Q2_anumu + Q2_nutau + Q2_anutau)
-            * K
-            * T**3
-            * inb
-        )
+        Q2_nu_tot = Q2_nue + Q2_anue + Q2_numu + Q2_anumu + Q2_nutau + Q2_anutau
+        Q2_nu_tot *= K * T**3 * inb
 
         self.thermo["Q2"] += Q2_nu_tot * exp_factor
 
         # Q6 (free energy) update (units: dimensionless)
-        Q6_nue = Q7_nue - T * Q2_nue / self.mn
-        Q6_anue = Q7_anue - T * Q2_anue / self.mn
-        Q6_numu = Q7_numu - T * Q2_numu / self.mn
-        Q6_anumu = Q7_anumu - T * Q2_anumu / self.mn
-        Q6_nutau = Q7_nutau - T * Q2_nutau / self.mn
-        Q6_anutau = Q7_anutau - T * Q2_anutau / self.mn
+        Q6_nue = Q7_nue - Q2_nue
+        Q6_anue = Q7_anue - Q2_anue
+        Q6_numu = Q7_numu - Q2_numu
+        Q6_anumu = Q7_anumu - Q2_anumu
+        Q6_nutau = Q7_nutau - Q2_nutau
+        Q6_anutau = Q7_anutau - Q2_anutau
 
         Q6_nu_tot = Q6_nue + Q6_anue + Q6_numu + Q6_anumu + Q6_nutau + Q6_anutau
+        Q6_nu_tot *= K * T**4 * inb_mn
 
         self.thermo["Q6"] += Q6_nu_tot * exp_factor
