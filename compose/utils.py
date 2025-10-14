@@ -575,3 +575,36 @@ def F3_Fukushima(y):
     fd[yp0] = -fd[yp0] + 11.3643939539669510 + y2 * (4.93480220054467931 + y2 * 0.25)
 
     return fd
+
+
+def smoothstep3(x, down, up):
+    """
+    Smoothstep function that smoothly
+    transitions from 0 to 1 between two points
+    on the real axis. See e.g.
+    https://en.wikipedia.org/wiki/Smoothstep.
+    This is the 7th-order polynomial version,
+    which guarantees differentiability up to
+    the third derivative.
+
+    Parameters
+    down : start point of the transition, below the function equals 0 (float)
+    up : end point of the transition, above the function equals 1. down < up mnust hold. (float)
+
+    Returns:
+    s : same shape as x, result of evaluating the function
+    """
+
+    assert down < up
+
+    # Rescale the independent variable to [0, 1]
+    x = (x - down) / (up - down)
+
+    # Compute the smoothstep polynomial using Horner's method
+    s = 35 * x**4 + x**5 * (-84 + x * (70 + x * (-20)))
+
+    # Enforce the extremal values to be 0 and 1
+    s[x < 0] = 0
+    s[x > 1] = 1
+
+    return s

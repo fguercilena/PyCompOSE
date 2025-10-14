@@ -1649,13 +1649,15 @@ class Table:
                     f.write(" %.15e" % yi)
                 f.write("\n")
 
-    def add_trapped_neutrinos(self, nb_lim, T_lim):
+    def add_trapped_neutrinos(
+        self, nb_down=7.5163e-04, nb_up=4.7425e-03, T_down=2, T_up=4
+    ):
         """
         Add the contribution of trapped neutrinos (each flavor modeled as an
         ultrarelativistic Fermi gas) to the EOS (i.e. to Q1, Q2, Q6, and Q7).
         The contribution of the neutrinos is confined to high densities and
-        temperatures by multiplying it by a factor
-        exp(-(nb_lim/nb + T_lim/T)).
+        temperatures by multiplying it by a sigmoid factor that transitions
+        between 0 and 1 in user-defined intervals of nb and T.
 
         Note: at present muon and tau neutrinos are treated as having zero
         chemical potential. If information about the chemical potential of
@@ -1663,12 +1665,15 @@ class Table:
         neutrino flavors are treated separately.
 
         Keyword arguments:
-        nb_lim -- number density limit
-        T_lim  -- temperature limit
+        nb_down -- start of transition in number density (float, default: 7.5163e-04 fm^-3 (~1e12.1 g/cm^3))
+        nb_up   -- end of transition in number density (float, default: 4.7425e-03 fm^-3 (~1e12.9 g/cm^3))
+        T_up    -- start of transition in temperature (float, default: 2 MeV)
+        T_down  -- end of transition in temperature (float, default: 4 MeV)
         """
 
         from .utils import F2_Fukushima as F2
         from .utils import F3_Fukushima as F3
+        from .utils import smoothstep3
 
         # 3D tables of nb and T
         nb = self.nb[:, np.newaxis, np.newaxis]
@@ -1677,7 +1682,10 @@ class Table:
         T = self.t[np.newaxis, np.newaxis, :]
         iT = 1 / T
 
-        exp_factor = np.exp(-(nb_lim * inb + T_lim * iT))
+        sigmoid_factor = (
+            smoothstep3(np.log10(self.nb), nb_down, nb_up)[:, np.newaxis, np.newaxis]
+            * smoothstep3(self.t, T_down, T_up)[np.newaxis, np.newaxis, :]
+        )
 
         # This is 4 pi / (hc)^3 in units of (MeV fm)^-3
         K = 6.593421629164754e-09
@@ -1714,12 +1722,12 @@ class Table:
         Q7_nu_tot = Q7_nue + Q7_anue + Q7_numu + Q7_anumu + Q7_nutau + Q7_anutau
         Q7_nu_tot *= K * T**4 * inb_mn
 
-        self.thermo["Q7"] += Q7_nu_tot * exp_factor
+        self.thermo["Q7"] += Q7_nu_tot * sigmoid_factor
 
         # Q1 (pressure over number density) update (units: MeV)
         Q1_nu_tot = Q7_nu_tot * self.mn / 3
 
-        self.thermo["Q1"] += Q1_nu_tot * exp_factor
+        self.thermo["Q1"] += Q1_nu_tot * sigmoid_factor
 
         # Q2 (entropy per baryon) update (units: dimensionless)
         Q2_nue = (4.0 / 3.0) * F3(eta_nue) - eta_nue * F2(eta_nue)
@@ -1732,7 +1740,7 @@ class Table:
         Q2_nu_tot = Q2_nue + Q2_anue + Q2_numu + Q2_anumu + Q2_nutau + Q2_anutau
         Q2_nu_tot *= K * T**3 * inb
 
-        self.thermo["Q2"] += Q2_nu_tot * exp_factor
+        self.thermo["Q2"] += Q2_nu_tot * sigmoid_factor
 
         # Q6 (free energy) update (units: dimensionless)
         Q6_nue = Q7_nue - Q2_nue
@@ -1745,4 +1753,4 @@ class Table:
         Q6_nu_tot = Q6_nue + Q6_anue + Q6_numu + Q6_anumu + Q6_nutau + Q6_anutau
         Q6_nu_tot *= K * T**4 * inb_mn
 
-        self.thermo["Q6"] += Q6_nu_tot * exp_factor
+        self.thermo["Q6"] += Q6_nu_tot * sigmoid_factor
