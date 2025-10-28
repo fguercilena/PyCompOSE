@@ -1682,6 +1682,7 @@ class Table:
         T = self.t[np.newaxis, np.newaxis, :]
         iT = 1 / T
 
+        nb_down, nb_up = np.log10([nb_down, nb_up])
         sigmoid_factor = (
             smoothstep3(np.log10(self.nb), nb_down, nb_up)[:, np.newaxis, np.newaxis]
             * smoothstep3(self.t, T_down, T_up)[np.newaxis, np.newaxis, :]
